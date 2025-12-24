@@ -1,0 +1,20 @@
+meta {
+  name: Get Settings
+  type: http
+  seq: 20
+}
+
+get {
+  url: {{base_url}}/api/v1/settings
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Has desired retention", function() {
+    expect(res.body.desired_retention).to.be.a("number");
+    expect(res.body.desired_retention).to.be.within(0.7, 0.97);
+  });
+}

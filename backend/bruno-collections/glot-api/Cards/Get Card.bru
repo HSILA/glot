@@ -1,0 +1,19 @@
+meta {
+  name: Get Card
+  type: http
+  seq: 5
+}
+
+get {
+  url: {{base_url}}/api/v1/cards/{{card_id}}
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Card has correct ID", function() {
+    expect(res.body.id).to.equal(bru.getVar("card_id"));
+  });
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Update Card
+  type: http
+  seq: 8
+}
+
+put {
+  url: {{base_url}}/api/v1/cards/{{card_id}}
+  body: json
+}
+
+body:json {
+  {
+    "front_content": "Bonjour!",
+    "tags": ["french", "greetings", "beginner"]
+  }
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Content updated", function() {
+    expect(res.body.front_content).to.equal("Bonjour!");
+  });
+}

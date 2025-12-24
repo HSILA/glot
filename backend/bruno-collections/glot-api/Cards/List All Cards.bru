@@ -1,0 +1,24 @@
+meta {
+  name: List All Cards
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{base_url}}/api/v1/cards
+}
+
+params:query {
+  limit: 50
+  offset: 0
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Returns array", function() {
+    expect(res.body).to.be.an("array");
+  });
+}

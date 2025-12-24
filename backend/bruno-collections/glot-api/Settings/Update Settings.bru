@@ -1,0 +1,27 @@
+meta {
+  name: Update Settings
+  type: http
+  seq: 21
+}
+
+put {
+  url: {{base_url}}/api/v1/settings
+  body: json
+}
+
+body:json {
+  {
+    "desired_retention": 0.85,
+    "maximum_interval_days": 730
+  }
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Retention updated", function() {
+    expect(res.body.desired_retention).to.equal(0.85);
+  });
+}

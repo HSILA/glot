@@ -1,0 +1,31 @@
+meta {
+  name: Review Card - Good
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/api/v1/cards/{{card_id}}/review
+  body: json
+}
+
+body:json {
+  {
+    "rating": 3,
+    "review_duration_ms": 4500
+  }
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Card reps incremented", function() {
+    expect(res.body.card.reps).to.be.greaterThan(0);
+  });
+  
+  test("Next review is in future", function() {
+    expect(new Date(res.body.card.next_review_at)).to.be.gt(new Date());
+  });
+}

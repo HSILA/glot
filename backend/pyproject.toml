@@ -1,0 +1,45 @@
+[project]
+name = "glot-backend"
+version = "0.1.0"
+description = "Glot - A personal spaced-repetition learning PWA backend"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.6",
+    "uvicorn[standard]>=0.34.0",
+    "sqlmodel>=0.0.22",
+    "asyncpg>=0.30.0",
+    "psycopg2-binary>=2.9.10",
+    "fsrs-rs-python>=0.8.2",
+    "pydantic-settings>=2.7.0",
+    "alembic>=1.14.0",
+    "python-dotenv>=1.0.1",
+    "loguru>=0.7.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3.4",
+    "pytest-asyncio>=0.25.0",
+    "httpx>=0.28.1",
+    "ruff>=0.8.4",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

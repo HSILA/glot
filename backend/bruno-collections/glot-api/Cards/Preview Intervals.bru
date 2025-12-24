@@ -1,0 +1,27 @@
+meta {
+  name: Preview Intervals
+  type: http
+  seq: 6
+}
+
+get {
+  url: {{base_url}}/api/v1/cards/{{card_id}}/preview
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Has all rating options", function() {
+    expect(res.body).to.have.property("again");
+    expect(res.body).to.have.property("hard");
+    expect(res.body).to.have.property("good");
+    expect(res.body).to.have.property("easy");
+  });
+  
+  test("Intervals are positive", function() {
+    expect(res.body.again.interval_days).to.be.greaterThan(0);
+    expect(res.body.good.interval_days).to.be.greaterThan(res.body.again.interval_days);
+  });
+}

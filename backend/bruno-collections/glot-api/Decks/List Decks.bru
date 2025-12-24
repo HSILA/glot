@@ -1,0 +1,19 @@
+meta {
+  name: List Decks
+  type: http
+  seq: 11
+}
+
+get {
+  url: {{base_url}}/api/v1/decks
+}
+
+tests {
+  test("Status is 200", function() {
+    expect(res.status).to.equal(200);
+  });
+  
+  test("Returns array", function() {
+    expect(res.body).to.be.an("array");
+  });
+}
