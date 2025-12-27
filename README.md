@@ -40,8 +40,12 @@ uv run uvicorn app.main:app --reload
 
 ```bash
 cd frontend
-# Will be set up later
+bun install
+bun run dev
 ```
+
+**Access:**
+- App: http://localhost:3000
 
 ## Project Structure
 
@@ -56,8 +60,12 @@ glot/
 │   │   └── ...
 │   ├── docs/              # Backend documentation
 │   └── README.md
-└── frontend/              # Next.js frontend (coming soon)
-    └── ...
+└── frontend/              # Next.js PWA frontend
+    ├── src/
+    │   ├── app/           # App Router pages
+    │   ├── components/    # UI components
+    │   └── lib/           # Utilities
+    └── public/            # Static assets
 ```
 
 ## Development
@@ -84,6 +92,6 @@ Adminer UI: http://localhost:8080
 - ✅ Review logging for optimizer training
 - ✅ Deck organization
 - ✅ Configurable FSRS parameters
-- 🚧 Frontend (Next.js PWA)
+- ✅ Frontend (Next.js PWA)
 - 🚧 FSRS optimizer
 - 🚧 Anki export
