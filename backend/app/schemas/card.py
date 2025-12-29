@@ -42,7 +42,7 @@ class CardRead(BaseModel):
     tags: list[str]
     deck_id: int | None
 
-    # FSRS fields
+    # Scheduling fields
     difficulty: float
     stability: float
     state: CardState

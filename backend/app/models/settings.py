@@ -1,51 +1,75 @@
 """
-AppSettings model - Global FSRS configuration.
+UserSettings model, per-user scheduling configuration.
 
-Stores the user-configurable settings for the FSRS algorithm.
-Only ONE row should exist in this table (singleton pattern).
+Each user has their own scheduling parameters that can be optimized
+based on their review history.
 """
 from datetime import datetime
 from typing import Any
 
+from fsrs_rs_python import DEFAULT_PARAMETERS
 from sqlalchemy import Column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
+# Convert to list once at module load (DEFAULT_PARAMETERS is a tuple)
+_DEFAULT_WEIGHTS: list[float] = list(DEFAULT_PARAMETERS)
 
-class AppSettings(SQLModel, table=True):
+
+def get_default_weights() -> list[float]:
+    """Return a copy of the default algorithm weights."""
+    return _DEFAULT_WEIGHTS.copy()
+
+
+class UserSettings(SQLModel, table=True):
     """
-    Global application settings for FSRS algorithm.
+    Per-user settings for spaced repetition scheduling.
 
-    This is a singleton table - only one row should exist.
+    Created automatically when a user registers.
 
-    Settings:
-        - desired_retention: Target recall probability (0.7-0.97)
-        - maximum_interval_days: Cap on longest review interval
-        - enable_fuzz: Add randomness to prevent review clumping
-        - weights: 21 FSRS parameters (null = use defaults)
+    Per-User Settings (stored here):
+        - desired_retention: Target recall probability (default: 0.9)
+        - weights: Algorithm parameters (default: library defaults, 19 floats)
+
+    Global Settings (see app/core/__init__.py):
+        - maximum_interval_days: Max days between reviews (default: 365)
+        - enable_fuzz: Add randomness to intervals (default: True)
     """
 
-    __tablename__ = "app_settings"
+    __tablename__ = "user_settings"
 
     id: int | None = Field(default=None, primary_key=True)
+    user_id: int = Field(
+        foreign_key="users.id",
+        unique=True,
+        index=True,
+        description="One settings row per user",
+    )
 
-    # FSRS Configuration
-    desired_retention: float = Field(default=0.9, ge=0.7, le=0.97)
-    maximum_interval_days: int = Field(default=365, ge=1, le=36500)
-    enable_fuzz: bool = Field(default=True)
+    # Scheduling Configuration
+    desired_retention: float = Field(
+        default=0.9,
+        ge=0.7,
+        le=0.97,
+        description="Target probability of correct recall",
+    )
 
-    # FSRS weights (21 parameters, null = use defaults)
-    # Only updated by the optimizer, not manually
-    weights: list[float] | None = Field(
-        default=None,
-        sa_column=Column(JSONB, nullable=True),
+    # Algorithm weights - initialized with defaults, updated by optimizer
+    weights: list[float] = Field(
+        default_factory=get_default_weights,
+        sa_column=Column(JSONB, nullable=False),
+        description="Algorithm parameters (21 floats)",
     )
 
     # Metadata for optimizer
-    last_optimized_at: datetime | None = Field(default=None)
+    last_optimized_at: datetime | None = Field(
+        default=None,
+        description="Last time scheduling parameters were optimized",
+    )
     optimizer_metadata: dict[str, Any] | None = Field(
         default=None,
         sa_column=Column(JSONB, nullable=True),
+        description="Optimizer run metadata (loss, sample size, etc.)",
     )
 
     # Timestamps

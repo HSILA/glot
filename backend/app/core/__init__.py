@@ -24,10 +24,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/glot"
     database_url_sync: str = "postgresql+psycopg2://postgres:postgres@localhost:5432/glot"
 
-    # FSRS Settings (global defaults)
-    default_desired_retention: float = 0.9
-    default_maximum_interval_days: int = 365
-    default_enable_fuzz: bool = True
+    # Scheduling (global defaults)
+    maximum_interval_days: int = 365
+    enable_fuzz: bool = True
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]

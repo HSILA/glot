@@ -19,32 +19,40 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.core import get_settings
 from app.db import get_async_session
-from app.models import AppSettings, Card, CardState, ReviewLog
+from app.models import UserSettings, Card, CardState, ReviewLog
 from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
 
 router = APIRouter()
 
+# TODO: Refactor all endpoints to require authentication and filter by user
+# Currently using global settings; will need to get user's settings after auth is implemented
+
 
 async def get_fsrs_service_from_db(
     session: AsyncSession = Depends(get_async_session),
 ) -> FSRSService:
-    """Get FSRS service configured from database settings."""
-    result = await session.execute(select(AppSettings).limit(1))
+    """Get scheduling service configured from user + global settings."""
+    config = get_settings()
+    result = await session.execute(select(UserSettings).limit(1))
     settings = result.scalar_one_or_none()
 
     if settings:
         return FSRSService(
             desired_retention=settings.desired_retention,
-            maximum_interval_days=settings.maximum_interval_days,
-            enable_fuzz=settings.enable_fuzz,
+            maximum_interval_days=config.maximum_interval_days,  # Global
+            enable_fuzz=config.enable_fuzz,  # Global
             weights=settings.weights,
         )
 
-    # Return default service if no settings exist
-    return FSRSService()
+    # Return default service if no user settings exist
+    return FSRSService(
+        maximum_interval_days=config.maximum_interval_days,
+        enable_fuzz=config.enable_fuzz,
+    )
 
 
 @router.get("", response_model=list[CardRead])

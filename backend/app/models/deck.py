@@ -1,12 +1,12 @@
 """
-Deck model - Optional card organization.
+Deck model, User-owned card organization.
 
+Each deck belongs to a single user and contains cards.
 Supports nested decks for hierarchical organization.
-Useful for future Anki export compatibility.
 """
 from datetime import datetime
 
-from sqlalchemy import text
+from sqlalchemy import Index, text
 from sqlmodel import Field, SQLModel
 
 
@@ -14,15 +14,44 @@ class Deck(SQLModel, table=True):
     """
     Deck model for organizing cards.
 
+    Each deck belongs to exactly one user.
     Supports parent-child relationships for nested deck hierarchies.
     """
 
     __tablename__ = "decks"
+    __table_args__ = (
+        # Composite index for user's decks sorted by name
+        Index("ix_decks_user_name", "user_id", "name"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
-    name: str = Field(min_length=1, max_length=255, index=True)
-    description: str | None = Field(default=None, max_length=1000)
-    parent_id: int | None = Field(default=None, foreign_key="decks.id", index=True)
+
+    # Ownership
+    user_id: int = Field(
+        foreign_key="users.id",
+        index=True,
+        description="User who owns this deck",
+    )
+
+    # Content
+    name: str = Field(
+        min_length=1,
+        max_length=255,
+        description="Deck name",
+    )
+    description: str | None = Field(
+        default=None,
+        max_length=1000,
+        description="Optional deck description",
+    )
+
+    # Hierarchy (optional nesting)
+    parent_id: int | None = Field(
+        default=None,
+        foreign_key="decks.id",
+        index=True,
+        description="Parent deck for nested organization",
+    )
 
     # Timestamps
     created_at: datetime = Field(

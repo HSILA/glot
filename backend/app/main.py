@@ -46,17 +46,28 @@ app = FastAPI(
     description="""
 # Glot API
 
-A personal spaced-repetition learning API using the FSRS algorithm.
+A personal language learning API.
 
 ## Features
 
-- **Cards**: CRUD operations for flashcards with polymorphic types (vocab, phrase, generic)
-- **FSRS Scheduling**: ML-based spaced repetition using fsrs-rs-python
-- **Review Logging**: Historical review data for future optimizer training
+- **Users**: Multi-user support with per-user settings
+- **Cards**: CRUD operations for flashcards
+- **Scheduling**: ML-based spaced repetition (FSRS algorithm)
+- **Review Logging**: Historical data for future algorithm optimization
 - **Decks**: Organize cards into decks (supports nested hierarchies)
-- **Settings**: Configure FSRS parameters (desired retention, max interval)
+- **Settings**: Per-user preferences (desired retention, algorithm weights)
 
-## FSRS Rating Scale
+## Configuration
+
+### Global Settings (Environment Variables)
+- `maximum_interval_days`: Max days between reviews (default: 365)
+- `enable_fuzz`: Add randomness to intervals (default: true)
+
+### Per-User Settings (Database)
+- `desired_retention`: Target recall probability (default: 0.9)
+- `weights`: Algorithm parameters (default: library defaults)
+
+## Rating Scale
 
 | Rating | Button | Effect |
 |--------|--------|--------|

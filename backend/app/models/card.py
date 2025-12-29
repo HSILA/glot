@@ -1,21 +1,24 @@
 """
-Card model - The core flashcard entity.
+Card model, The core flashcard entity.
 
 This model uses a "single table" design with JSONB metadata for flexibility,
 allowing different card types (vocab, phrase, generic, etc.) to store
 type-specific data without schema changes.
+
+Cards belong to a deck, which belongs to a user. This provides user
+ownership without adding user_id directly to cards.
 """
 from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column, text
+from sqlalchemy import Column, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 
 class CardState(str, Enum):
-    """FSRS card states during the learning process."""
+    """Card states during the learning process."""
 
     NEW = "new"
     LEARNING = "learning"
@@ -25,17 +28,17 @@ class CardState(str, Enum):
 
 class Card(SQLModel, table=True):
     """
-    Flashcard model with FSRS scheduling.
+    Flashcard model with spaced repetition scheduling.
 
-
+    Ownership: Cards inherit user ownership via deck_id → decks.user_id
 
     Content Fields:
         - front_content: The question/cue (Markdown supported)
         - back_content: The answer/reveal (Markdown supported)
         - meta_data: Type-specific fields as JSONB
-        - tags: List of tags for organization and Anki export
+        - tags: List of tags for organization
 
-    FSRS Scheduling Fields:
+    Scheduling Fields:
         - difficulty: Card difficulty (1-10)
         - stability: Memory stability in days
         - state: Current learning state
@@ -44,34 +47,82 @@ class Card(SQLModel, table=True):
     """
 
     __tablename__ = "cards"
+    __table_args__ = (
+        # Composite index for "due cards in deck" query (most common query)
+        Index("ix_cards_deck_next_review", "deck_id", "next_review_at"),
+        # Composite index for "cards by state in deck" query
+        Index("ix_cards_deck_state", "deck_id", "state"),
+    )
 
     id: int | None = Field(default=None, primary_key=True)
 
+    # Organization (REQUIRED - cards must belong to a deck)
+    deck_id: int = Field(
+        foreign_key="decks.id",
+        index=True,
+        description="Deck this card belongs to (required)",
+    )
+
     # Content
-    front_content: str = Field(min_length=1, max_length=10000)
-    back_content: str = Field(min_length=1, max_length=10000)
+    front_content: str = Field(
+        min_length=1,
+        max_length=10000,
+        description="Question/cue side (Markdown)",
+    )
+    back_content: str = Field(
+        min_length=1,
+        max_length=10000,
+        description="Answer/reveal side (Markdown)",
+    )
     meta_data: dict[str, Any] = Field(
         default_factory=dict,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'")),
+        description="Type-specific metadata (vocab readings, etc.)",
     )
     tags: list[str] = Field(
         default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
+        description="Tags for organization and Anki export",
     )
 
-    # Organization (for future Anki export)
-    deck_id: int | None = Field(default=None, foreign_key="decks.id", index=True)
-
-    # FSRS Scheduling Fields
-    difficulty: float = Field(default=5.0, ge=1.0, le=10.0)
-    stability: float = Field(default=0.0, ge=0.0)
-    state: CardState = Field(default=CardState.NEW, index=True)
-    reps: int = Field(default=0, ge=0)
-    lapses: int = Field(default=0, ge=0)
+    # Scheduling Fields
+    difficulty: float = Field(
+        default=5.0,
+        ge=1.0,
+        le=10.0,
+        description="Card difficulty (1=easy, 10=hard)",
+    )
+    stability: float = Field(
+        default=0.0,
+        ge=0.0,
+        description="Memory stability in days",
+    )
+    state: CardState = Field(
+        default=CardState.NEW,
+        index=True,
+        description="Current learning state",
+    )
+    reps: int = Field(
+        default=0,
+        ge=0,
+        description="Total successful review count",
+    )
+    lapses: int = Field(
+        default=0,
+        ge=0,
+        description="Times forgotten (rated Again)",
+    )
 
     # Timestamps
-    last_review_at: datetime | None = Field(default=None)
-    next_review_at: datetime | None = Field(default=None, index=True)
+    last_review_at: datetime | None = Field(
+        default=None,
+        description="When card was last reviewed",
+    )
+    next_review_at: datetime | None = Field(
+        default=None,
+        index=True,
+        description="When card is next due for review",
+    )
     created_at: datetime = Field(
         default_factory=datetime.utcnow,
         sa_column_kwargs={"server_default": text("now()")},

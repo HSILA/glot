@@ -41,13 +41,13 @@ class FSRSService:
         weights: list[float] | None = None,
     ):
         """
-        Initialize FSRS service with configuration.
+        Initialize scheduling service with configuration.
 
         Args:
-            desired_retention: Target recall probability (0.7-0.97)
-            maximum_interval_days: Maximum days between reviews
-            enable_fuzz: Add randomness to prevent review clumping
-            weights: Custom FSRS parameters (None = use defaults)
+            desired_retention: Target recall probability (per-user setting)
+            maximum_interval_days: Maximum days between reviews (global config)
+            enable_fuzz: Add randomness to prevent review clumping (global config)
+            weights: Algorithm parameters (per-user, None = use library defaults)
         """
         self.desired_retention = desired_retention
         self.maximum_interval_days = maximum_interval_days
@@ -190,7 +190,7 @@ def get_fsrs_service(
     enable_fuzz: bool = True,
     weights: list[float] | None = None,
 ) -> FSRSService:
-    """Factory function to create FSRS service with settings."""
+    """Factory function to create scheduling service with settings."""
     return FSRSService(
         desired_retention=desired_retention,
         maximum_interval_days=maximum_interval_days,

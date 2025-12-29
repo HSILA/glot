@@ -8,23 +8,26 @@ from pydantic import BaseModel, Field
 
 
 class SettingsUpdate(BaseModel):
-    """Schema for updating settings."""
+    """Schema for updating user settings."""
 
     desired_retention: float | None = Field(default=None, ge=0.7, le=0.97)
-    maximum_interval_days: int | None = Field(default=None, ge=1, le=36500)
-    enable_fuzz: bool | None = None
 
 
 class SettingsRead(BaseModel):
-    """Schema for reading settings (response)."""
+    """Schema for reading user settings (response)."""
 
     id: int
+    user_id: int
+
+    # User-configurable
     desired_retention: float
-    maximum_interval_days: int
-    enable_fuzz: bool
-    weights: list[float] | None
+
+    # Algorithm weights
+    weights: list[float]
     last_optimized_at: datetime | None
     optimizer_metadata: dict[str, Any] | None
+
+    # Timestamps
     created_at: datetime
     updated_at: datetime
 
