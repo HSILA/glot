@@ -13,7 +13,8 @@ FSRS Rating Scale:
     3 = Good  (Normal recall, standard stability increase)
     4 = Easy  (Effortless recall, large stability increase)
 """
-from datetime import datetime, timedelta, timezone
+
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from fsrs_rs_python import DEFAULT_PARAMETERS, FSRS, MemoryState
@@ -76,10 +77,10 @@ class FSRSService:
         if card.last_review_at is None:
             return 0
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         last_review = card.last_review_at
         if last_review.tzinfo is None:
-            last_review = last_review.replace(tzinfo=timezone.utc)
+            last_review = last_review.replace(tzinfo=UTC)
 
         elapsed = (now - last_review).days
         return max(0, elapsed)
@@ -176,7 +177,7 @@ class FSRSService:
             card.state = CardState.REVIEW
 
         # Update timestamps
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         card.last_review_at = now
         card.next_review_at = now + timedelta(days=interval_days)
         card.updated_at = now

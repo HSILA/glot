@@ -11,7 +11,8 @@ Endpoints:
     POST /cards/{id}/review - Submit a review rating
     GET  /cards/{id}/preview - Preview next intervals without reviewing
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -20,8 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core import get_settings
-from app.db import get_async_session
-from app.models import UserSettings, Card, CardState, ReviewLog
+from app.dependencies import get_async_session
+from app.models import Card, CardState, ReviewLog, UserSettings
 from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
@@ -99,7 +100,7 @@ async def get_due_cards(
     Returns cards where next_review_at <= now, plus new cards.
     Ordered by: overdue cards first (oldest), then new cards.
     """
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     query = select(Card).where(
         (Card.next_review_at <= now) | (Card.state == CardState.NEW)
@@ -161,7 +162,7 @@ async def update_card(
     for key, value in update_data.items():
         setattr(card, key, value)
 
-    card.updated_at = datetime.now(timezone.utc)
+    card.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(card)
     return card

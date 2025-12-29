@@ -6,11 +6,16 @@ A FastAPI application for managing flashcards with FSRS scheduling.
 Usage:
     uvicorn app.main:app --reload
 """
+
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from loguru import logger
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from app.api import v1_router
 from app.core import get_settings
@@ -22,6 +27,17 @@ settings = get_settings()
 # Configure logging
 configure_logging()
 
+# Rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
+
+def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+    """Custom handler for rate limit exceeded."""
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"Rate limit exceeded: {exc.detail}"},
+    )
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -32,7 +48,7 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db()
     logger.success("Database initialized successfully")
-    logger.info(f"API ready at http://localhost:8000")
+    logger.info("API ready at http://localhost:8000")
     yield
     # Shutdown
     logger.info("Shutting down Glot API...")
@@ -43,41 +59,12 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="""
-# Glot API
-
-A personal language learning API.
-
-## Features
-
-- **Users**: Multi-user support with per-user settings
-- **Cards**: CRUD operations for flashcards
-- **Scheduling**: ML-based spaced repetition (FSRS algorithm)
-- **Review Logging**: Historical data for future algorithm optimization
-- **Decks**: Organize cards into decks (supports nested hierarchies)
-- **Settings**: Per-user preferences (desired retention, algorithm weights)
-
-## Configuration
-
-### Global Settings (Environment Variables)
-- `maximum_interval_days`: Max days between reviews (default: 365)
-- `enable_fuzz`: Add randomness to intervals (default: true)
-
-### Per-User Settings (Database)
-- `desired_retention`: Target recall probability (default: 0.9)
-- `weights`: Algorithm parameters (default: library defaults)
-
-## Rating Scale
-
-| Rating | Button | Effect |
-|--------|--------|--------|
-| 1 | Again | Failed recall, stability resets |
-| 2 | Hard | Difficult recall, small stability increase |
-| 3 | Good | Normal recall, standard stability increase |
-| 4 | Easy | Effortless recall, large stability increase |
-    """,
     lifespan=lifespan,
 )
+
+# Rate limiting
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
 
 # CORS middleware
 app.add_middleware(

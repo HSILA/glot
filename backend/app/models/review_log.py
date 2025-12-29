@@ -6,6 +6,7 @@ enabling future algorithm optimization personalized to the user.
 
 Ownership: ReviewLogs inherit user ownership via card_id → cards.deck_id → decks.user_id
 """
+
 from datetime import datetime
 
 from sqlalchemy import Index, text

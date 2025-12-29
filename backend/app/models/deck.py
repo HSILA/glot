@@ -4,6 +4,7 @@ Deck model, User-owned card organization.
 Each deck belongs to a single user and contains cards.
 Supports nested decks for hierarchical organization.
 """
+
 from datetime import datetime
 
 from sqlalchemy import Index, text

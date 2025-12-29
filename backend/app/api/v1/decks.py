@@ -8,14 +8,15 @@ Endpoints:
     PUT  /decks/{id}   - Update a deck
     DELETE /decks/{id} - Delete a deck
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.db import get_async_session
+from app.dependencies import get_async_session
 from app.models import Deck
 from app.schemas import DeckCreate, DeckRead, DeckUpdate
 
@@ -98,7 +99,7 @@ async def update_deck(
     for key, value in update_data.items():
         setattr(deck, key, value)
 
-    deck.updated_at = datetime.now(timezone.utc)
+    deck.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(deck)
     return deck

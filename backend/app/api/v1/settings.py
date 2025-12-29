@@ -10,14 +10,15 @@ Endpoints:
     GET  /settings - Get current user's settings
     PUT  /settings - Update current user's settings
 """
-from datetime import datetime, timezone
+
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.db import get_async_session
+from app.dependencies import get_async_session
 from app.models import UserSettings
 from app.schemas import SettingsRead, SettingsUpdate
 
@@ -30,7 +31,7 @@ router = APIRouter()
 async def get_or_create_settings(session: AsyncSession) -> UserSettings:
     """
     Get existing settings or create default ones.
-    
+
     TODO: After auth is implemented, this should:
     1. Get the current user from the request
     2. Query UserSettings by user_id
@@ -86,7 +87,7 @@ async def update_settings(
     for key, value in update_data.items():
         setattr(settings, key, value)
 
-    settings.updated_at = datetime.now(timezone.utc)
+    settings.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(settings)
 

@@ -1,6 +1,7 @@
 """
 Card schemas for API request/response validation.
 """
+
 from datetime import datetime
 from typing import Any
 
@@ -12,7 +13,6 @@ from app.models.card import CardState
 class CardCreate(BaseModel):
     """Schema for creating a new card."""
 
-
     front_content: str = Field(min_length=1, max_length=10000)
     back_content: str = Field(min_length=1, max_length=10000)
     meta_data: dict[str, Any] = Field(default_factory=dict)
@@ -22,7 +22,6 @@ class CardCreate(BaseModel):
 
 class CardUpdate(BaseModel):
     """Schema for updating an existing card."""
-
 
     front_content: str | None = Field(default=None, min_length=1, max_length=10000)
     back_content: str | None = Field(default=None, min_length=1, max_length=10000)

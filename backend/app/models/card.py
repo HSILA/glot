@@ -8,6 +8,7 @@ type-specific data without schema changes.
 Cards belong to a deck, which belongs to a user. This provides user
 ownership without adding user_id directly to cards.
 """
+
 from datetime import datetime
 from enum import Enum
 from typing import Any

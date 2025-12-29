@@ -4,6 +4,7 @@ UserSettings model, per-user scheduling configuration.
 Each user has their own scheduling parameters that can be optimized
 based on their review history.
 """
+
 from datetime import datetime
 from typing import Any
 

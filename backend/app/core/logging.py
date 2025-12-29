@@ -1,8 +1,9 @@
 """
 Logging configuration using loguru.
 """
-import sys
+
 import os
+import sys
 
 from loguru import logger
 

@@ -4,6 +4,7 @@ User model - Core authentication and identity.
 Stores user credentials and profile information.
 Passwords are stored as hashes (never plain text).
 """
+
 from datetime import datetime
 
 from sqlalchemy import Index, text
@@ -24,9 +25,7 @@ class User(SQLModel, table=True):
     """
 
     __tablename__ = "users"
-    __table_args__ = (
-        Index("ix_users_email_active", "email", "is_active"),
-    )
+    __table_args__ = (Index("ix_users_email_active", "email", "is_active"),)
 
     id: int | None = Field(default=None, primary_key=True)
 
