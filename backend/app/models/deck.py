@@ -7,8 +7,10 @@ Supports nested decks for hierarchical organization.
 
 from datetime import datetime
 
-from sqlalchemy import Index, text
+from sqlalchemy import Column, Index, text
 from sqlmodel import Field, SQLModel
+
+from app.core.datetime_utils import TimestampTZ, utc_now
 
 
 class Deck(SQLModel, table=True):
@@ -56,10 +58,12 @@ class Deck(SQLModel, table=True):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()")},
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, server_default=text("now()"), nullable=False),
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()"), "onupdate": datetime.utcnow},
+        default_factory=utc_now,
+        sa_column=Column(
+            TimestampTZ, server_default=text("now()"), onupdate=utc_now, nullable=False
+        ),
     )

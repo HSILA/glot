@@ -7,8 +7,10 @@ Passwords are stored as hashes (never plain text).
 
 from datetime import datetime
 
-from sqlalchemy import Index, text
+from sqlalchemy import Column, Index, text
 from sqlmodel import Field, SQLModel
+
+from app.core.datetime_utils import TimestampTZ, utc_now
 
 
 class User(SQLModel, table=True):
@@ -57,11 +59,12 @@ class User(SQLModel, table=True):
 
     # Timestamps
     joined_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()")},
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, server_default=text("now()"), nullable=False),
         description="When the user registered",
     )
     last_login_at: datetime | None = Field(
         default=None,
+        sa_column=Column(TimestampTZ, nullable=True),
         description="Last successful login timestamp",
     )

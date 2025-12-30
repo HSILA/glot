@@ -10,8 +10,10 @@ Tokens are rotated on each refresh (rolling sessions).
 
 from datetime import datetime
 
-from sqlalchemy import Index, text
+from sqlalchemy import Column, Index, text
 from sqlmodel import Field, SQLModel
+
+from app.core.datetime_utils import TimestampTZ, utc_now
 
 
 class RefreshToken(SQLModel, table=True):
@@ -60,17 +62,18 @@ class RefreshToken(SQLModel, table=True):
 
     # Expiry (rolling - extended on each refresh)
     expires_at: datetime = Field(
-        index=True,
+        sa_column=Column(TimestampTZ, index=True, nullable=False),
         description="When this token expires",
     )
 
     # Audit timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()")},
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, server_default=text("now()"), nullable=False),
         description="When this session was created (first login)",
     )
     last_used_at: datetime = Field(
-        default_factory=datetime.utcnow,
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, nullable=False),
         description="When this token was last used for refresh",
     )

@@ -8,7 +8,6 @@ import {
   FlaskConical,
   Layers,
   Settings,
-  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -91,13 +90,6 @@ export function Sidebar() {
         <Button variant="ghost" className="w-full justify-start gap-3 h-11 px-4">
           <Settings className="h-5 w-5 text-muted-foreground" />
           <span>Settings</span>
-        </Button>
-        <Button
-          variant="ghost"
-          className="w-full justify-start gap-3 h-11 px-4 text-muted-foreground hover:text-destructive"
-        >
-          <LogOut className="h-5 w-5" />
-          <span>Logout</span>
         </Button>
       </div>
     </aside>

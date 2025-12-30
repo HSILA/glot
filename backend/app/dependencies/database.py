@@ -4,6 +4,7 @@ Database session dependencies.
 
 from collections.abc import AsyncGenerator
 
+from fastapi import HTTPException
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +26,12 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
         try:
             yield session
             await session.commit()
+        except HTTPException:
+            # HTTP exceptions are expected API responses, not errors
+            await session.rollback()
+            raise
         except Exception as e:
             logger.error(f"Database session error: {e}")
             await session.rollback()
             raise
+

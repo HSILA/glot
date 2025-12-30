@@ -9,8 +9,10 @@ Ownership: ReviewLogs inherit user ownership via card_id → cards.deck_id → d
 
 from datetime import datetime
 
-from sqlalchemy import Index, text
+from sqlalchemy import Column, Index, text
 from sqlmodel import Field, SQLModel
+
+from app.core.datetime_utils import TimestampTZ, utc_now
 
 
 class ReviewLog(SQLModel, table=True):
@@ -54,8 +56,8 @@ class ReviewLog(SQLModel, table=True):
         description="User rating: 1=Again, 2=Hard, 3=Good, 4=Easy",
     )
     reviewed_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()")},
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, server_default=text("now()"), nullable=False),
         description="When the review occurred",
     )
     review_duration_ms: int | None = Field(

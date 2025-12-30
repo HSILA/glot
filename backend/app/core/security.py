@@ -2,7 +2,7 @@
 Security utilities for authentication.
 
 This module provides:
-- Password hashing and verification (bcrypt)
+- Password hashing and verification (Argon2)
 - JWT token creation and validation
 - Refresh token generation and hashing (SHA256)
 - User-Agent device name parsing
@@ -14,28 +14,33 @@ import secrets
 from datetime import UTC, datetime, timedelta
 
 import jwt
-from passlib.context import CryptContext
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
 from user_agents import parse as parse_user_agent
 
 from app.core import get_settings
 
-# Password hashing context (bcrypt)
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing with Argon2 (no length limits, modern algorithm)
+ph = PasswordHasher()
+
+# Password validation constants
+PASSWORD_MIN_LENGTH = 8
+PASSWORD_MAX_LENGTH = 128  # Argon2 has no practical limit
+PASSWORD_SPECIAL_CHARS = r"[!@#$%^&*()_+\-=\[\]{};':\",./<>?\\|`~]"
 
 
 def hash_password(password: str) -> str:
-    """Hash a password using bcrypt."""
-    return pwd_context.hash(password)
+    """Hash a password using Argon2."""
+    return ph.hash(password)
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash."""
-    return pwd_context.verify(plain_password, hashed_password)
-
-
-PASSWORD_MIN_LENGTH = 8
-PASSWORD_MAX_LENGTH = 128
-PASSWORD_SPECIAL_CHARS = r"[!@#$%^&*()_+\-=\[\]{};':\",./<>?\\|`~]"
+    """Verify a password against its Argon2 hash."""
+    try:
+        ph.verify(hashed_password, plain_password)
+        return True
+    except VerifyMismatchError:
+        return False
 
 
 def validate_password_strength(password: str) -> str:

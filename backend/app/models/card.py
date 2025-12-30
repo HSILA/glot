@@ -17,6 +17,8 @@ from sqlalchemy import Column, Index, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
+from app.core.datetime_utils import TimestampTZ, utc_now
+
 
 class CardState(str, Enum):
     """Card states during the learning process."""
@@ -117,18 +119,21 @@ class Card(SQLModel, table=True):
     # Timestamps
     last_review_at: datetime | None = Field(
         default=None,
+        sa_column=Column(TimestampTZ, nullable=True),
         description="When card was last reviewed",
     )
     next_review_at: datetime | None = Field(
         default=None,
-        index=True,
+        sa_column=Column(TimestampTZ, index=True, nullable=True),
         description="When card is next due for review",
     )
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()")},
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, server_default=text("now()"), nullable=False),
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()"), "onupdate": datetime.utcnow},
+        default_factory=utc_now,
+        sa_column=Column(
+            TimestampTZ, server_default=text("now()"), onupdate=utc_now, nullable=False
+        ),
     )

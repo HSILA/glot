@@ -13,6 +13,8 @@ from sqlalchemy import Column, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
+from app.core.datetime_utils import TimestampTZ, utc_now
+
 # Convert to list once at module load (DEFAULT_PARAMETERS is a tuple)
 _DEFAULT_WEIGHTS: list[float] = list(DEFAULT_PARAMETERS)
 
@@ -75,10 +77,12 @@ class UserSettings(SQLModel, table=True):
 
     # Timestamps
     created_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()")},
+        default_factory=utc_now,
+        sa_column=Column(TimestampTZ, server_default=text("now()"), nullable=False),
     )
     updated_at: datetime = Field(
-        default_factory=datetime.utcnow,
-        sa_column_kwargs={"server_default": text("now()"), "onupdate": datetime.utcnow},
+        default_factory=utc_now,
+        sa_column=Column(
+            TimestampTZ, server_default=text("now()"), onupdate=utc_now, nullable=False
+        ),
     )
