@@ -2,13 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import {
-  Home,
-  Library,
-  FlaskConical,
-  Layers,
-  Settings,
-} from "lucide-react";
+import { Home, Library, FlaskConical, Layers } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -19,7 +13,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+}
+
+const navItems: NavItem[] = [
   { href: "/", label: "My Day", icon: Home },
   { href: "/library", label: "Library", icon: Library },
   { href: "/refinery", label: "Refinery", icon: FlaskConical },
@@ -28,6 +28,40 @@ const navItems = [
 
 export function Sidebar() {
   const pathname = usePathname();
+
+  const renderNavItem = (item: NavItem) => {
+    const isActive =
+      pathname === item.href ||
+      (item.href !== "/" && pathname.startsWith(item.href));
+
+    return (
+      <Tooltip key={item.href}>
+        <TooltipTrigger asChild>
+          <Link href={item.href}>
+            <Button
+              variant={isActive ? "secondary" : "ghost"}
+              className={cn(
+                "w-full justify-start gap-3 h-11 px-4",
+                isActive &&
+                  "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
+              )}
+            >
+              <item.icon
+                className={cn(
+                  "h-5 w-5",
+                  isActive ? "text-primary" : "text-muted-foreground"
+                )}
+              />
+              <span>{item.label}</span>
+            </Button>
+          </Link>
+        </TooltipTrigger>
+        <TooltipContent side="right" className="md:hidden">
+          {item.label}
+        </TooltipContent>
+      </Tooltip>
+    );
+  };
 
   return (
     <aside className="hidden md:flex md:w-64 lg:w-72 flex-col h-screen fixed left-0 top-0 border-r border-sidebar-border bg-sidebar">
@@ -46,52 +80,9 @@ export function Sidebar() {
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1">
         <TooltipProvider delayDuration={0}>
-          {navItems.map((item) => {
-            const isActive =
-              pathname === item.href ||
-              (item.href !== "/" && pathname.startsWith(item.href));
-            return (
-              <Tooltip key={item.href}>
-                <TooltipTrigger asChild>
-                  <Link href={item.href}>
-                    <Button
-                      variant={isActive ? "secondary" : "ghost"}
-                      className={cn(
-                        "w-full justify-start gap-3 h-11 px-4",
-                        isActive &&
-                          "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                      )}
-                    >
-                      <item.icon
-                        className={cn(
-                          "h-5 w-5",
-                          isActive
-                            ? "text-primary"
-                            : "text-muted-foreground"
-                        )}
-                      />
-                      <span>{item.label}</span>
-                    </Button>
-                  </Link>
-                </TooltipTrigger>
-                <TooltipContent side="right" className="md:hidden">
-                  {item.label}
-                </TooltipContent>
-              </Tooltip>
-            );
-          })}
+          {navItems.map((item) => renderNavItem(item))}
         </TooltipProvider>
       </nav>
-
-      <Separator />
-
-      {/* Footer */}
-      <div className="p-4 space-y-1">
-        <Button variant="ghost" className="w-full justify-start gap-3 h-11 px-4">
-          <Settings className="h-5 w-5 text-muted-foreground" />
-          <span>Settings</span>
-        </Button>
-      </div>
     </aside>
   );
 }

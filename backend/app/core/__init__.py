@@ -40,6 +40,24 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
 
+    # Resources constraints
+    resource_max_size_bytes: int = 75 * 1024 * 1024  # 75 MB
+    resource_max_files_per_user: int = 10
+    resource_allowed_types: list[str] = ["application/pdf"]
+
+    # Cloudflare R2
+    r2_account_id: str
+    r2_access_key_id: str
+    r2_secret_access_key: str
+    r2_bucket_name: str
+
+    # Redis
+    redis_url: str = "redis://localhost:6379"
+
+    # Extraction Agent
+    openrouter_api_key: str
+    extraction_agent_model: str = "qwen/qwen-3-vl-235b-a22b-instruct"
+
 
 # Rate limiting
 RATE_LIMIT_LOGIN = "5/5minutes"

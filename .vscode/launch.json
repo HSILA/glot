@@ -24,12 +24,27 @@
       "runtimeExecutable": "bun",
       "runtimeArgs": ["--bun", "run", "dev", "--turbopack"],
       "console": "integratedTerminal"
+    },
+    {
+      "name": "Worker: Extraction",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "arq",
+      "args": ["app.workers.extraction_worker.WorkerSettings"],
+      "cwd": "${workspaceFolder}/backend",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/backend",
+        "VIRTUAL_ENV": "${workspaceFolder}/backend/.venv"
+      },
+      "python": "${workspaceFolder}/backend/.venv/bin/python",
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ],
   "compounds": [
     {
-      "name": "Full Stack: Backend + Frontend",
-      "configurations": ["Backend: FastAPI", "Frontend: Next.js"],
+      "name": "Full Stack: Backend + Frontend + Worker",
+      "configurations": ["Backend: FastAPI", "Frontend: Next.js", "Worker: Extraction"],
       "stopAll": true,
       "presentation": {
         "hidden": false,

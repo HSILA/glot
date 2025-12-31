@@ -1,0 +1,11 @@
+{
+  "cors_rules": [
+    {
+      "allowed_origins": ["http://localhost:3000", "https://your-production-domain.com"],
+      "allowed_methods": ["GET", "PUT", "HEAD"],
+      "allowed_headers": ["*"],
+      "expose_headers": ["ETag"],
+      "max_age_seconds": 3600
+    }
+  ]
+}

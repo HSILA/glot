@@ -23,6 +23,16 @@ from .card import (
     ReviewResponse,
 )
 from .deck import DeckCreate, DeckRead, DeckUpdate
+from .resource import (
+    AddPublicResourceRequest,
+    ExtractionProgressResponse,
+    ResourceListResponse,
+    ResourceRead,
+    ResourceUpdateRequest,
+    UploadConfirmRequest,
+    UploadRequest,
+    UploadResponse,
+)
 from .settings import SettingsRead, SettingsUpdate
 
 __all__ = [
@@ -48,6 +58,15 @@ __all__ = [
     "DeckCreate",
     "DeckRead",
     "DeckUpdate",
+    # Resources
+    "UploadRequest",
+    "UploadResponse",
+    "UploadConfirmRequest",
+    "ResourceRead",
+    "ResourceListResponse",
+    "ExtractionProgressResponse",
+    "AddPublicResourceRequest",
+    "ResourceUpdateRequest",
     # Settings
     "SettingsRead",
     "SettingsUpdate",

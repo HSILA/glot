@@ -48,8 +48,12 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database...")
     await init_db()
     logger.success("Database initialized successfully")
+
+    # NOTE: ARQ worker runs as a separate process for non-blocking extraction
+    # Start it with: uv run arq app.workers.extraction_worker.WorkerSettings
     logger.info("API ready at http://localhost:8000")
     yield
+
     # Shutdown
     logger.info("Shutting down Glot API...")
     await close_db()

@@ -34,4 +34,3 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
             logger.error(f"Database session error: {e}")
             await session.rollback()
             raise
-

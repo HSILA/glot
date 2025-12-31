@@ -17,6 +17,20 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: glot-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   adminer:
     image: adminer:latest
     container_name: glot-adminer
@@ -28,5 +42,25 @@ services:
     depends_on:
       - postgres
 
+  worker:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: glot-worker
+    restart: unless-stopped
+    command: ["arq", "app.workers.extraction_worker.WorkerSettings"]
+    env_file:
+      - ./backend/.env
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    deploy:
+      replicas: 2  # Scale workers as needed
+
 volumes:
   postgres_data:
+  redis_data:
+
+

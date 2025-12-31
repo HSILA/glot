@@ -1,0 +1,318 @@
+"""
+Storage service for Cloudflare R2 operations.
+
+Provides S3-compatible operations for:
+- Presigned URL generation (upload/download)
+- File upload/download
+- File deletion
+- Content hash computation
+"""
+
+import hashlib
+from typing import BinaryIO
+
+import boto3
+from botocore.config import Config
+
+from app.core import Settings
+
+
+class StorageService:
+    """
+    Cloudflare R2 storage operations.
+
+    Uses boto3 with S3-compatible endpoint.
+    """
+
+    def __init__(self, settings: Settings) -> None:
+        self._bucket_name = settings.r2_bucket_name
+        self._client = boto3.client(
+            "s3",
+            endpoint_url=f"https://{settings.r2_account_id}.r2.cloudflarestorage.com",
+            aws_access_key_id=settings.r2_access_key_id,
+            aws_secret_access_key=settings.r2_secret_access_key,
+            region_name="auto",
+            config=Config(signature_version="s3v4"),
+        )
+
+    @property
+    def bucket_name(self) -> str:
+        return self._bucket_name
+
+    def generate_upload_url(
+        self,
+        content_hash: str,
+        content_type: str = "application/pdf",
+        expires_in: int = 900,  # 15 minutes
+    ) -> str:
+        """
+        Generate a presigned URL for direct upload to R2.
+
+        Args:
+            content_hash: SHA-256 hash (used as filename)
+            content_type: MIME type of the file
+            expires_in: URL expiration in seconds
+
+        Returns:
+            Presigned URL for PUT request
+        """
+        key = f"raw/{content_hash}.pdf"
+        return self._client.generate_presigned_url(
+            "put_object",
+            Params={
+                "Bucket": self._bucket_name,
+                "Key": key,
+                "ContentType": content_type,
+            },
+            ExpiresIn=expires_in,
+        )
+
+    def generate_download_url(
+        self,
+        content_hash: str,
+        folder: str = "raw",
+        filename: str | None = None,
+        expires_in: int = 3600,  # 1 hour
+        response_content_type: str | None = None,
+    ) -> str:
+        """
+        Generate a presigned URL for downloading a file.
+
+        Args:
+            content_hash: SHA-256 hash of the file
+            folder: Storage folder (raw, processed, thumbnails)
+            filename: Optional custom filename for download
+            expires_in: URL expiration in seconds
+            response_content_type: Optional content type for response
+
+        Returns:
+            Presigned URL for GET request
+        """
+        if folder == "raw":
+            key = f"raw/{content_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{content_hash}.webp"
+        else:
+            key = f"{folder}/{content_hash}"
+
+        params = {
+            "Bucket": self._bucket_name,
+            "Key": key,
+        }
+        if filename:
+            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        if response_content_type:
+            params["ResponseContentType"] = response_content_type
+
+        return self._client.generate_presigned_url(
+            "get_object",
+            Params=params,
+            ExpiresIn=expires_in,
+        )
+
+    def upload_file(
+        self,
+        file: bytes | BinaryIO,
+        key_or_hash: str,
+        folder: str | None = "raw",
+        content_type: str = "application/pdf",
+    ) -> None:
+        """
+        Upload a file to R2.
+
+        Args:
+            file: Bytes or file-like object to upload
+            key_or_hash: Either a full key path (if folder is None) or content hash
+            folder: Target folder (raw, processed, thumbnails) or None for custom key
+            content_type: MIME type of the file
+        """
+        from io import BytesIO
+
+        # Determine the key
+        if folder is None:
+            # key_or_hash is the full key path
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{key_or_hash}.webp"
+        else:
+            key = f"{folder}/{key_or_hash}"
+
+        # Convert bytes to file-like if needed
+        if isinstance(file, bytes):
+            file = BytesIO(file)
+
+        self._client.upload_fileobj(
+            file,
+            self._bucket_name,
+            key,
+            ExtraArgs={"ContentType": content_type},
+        )
+
+    def download_file(self, key_or_hash: str, folder: str | None = "raw") -> bytes:
+        """
+        Download a file from R2.
+
+        Args:
+            key_or_hash: Either a full key path (if folder is None) or content hash
+            folder: Source folder or None for custom key path
+
+        Returns:
+            File contents as bytes
+        """
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{key_or_hash}.webp"
+        else:
+            key = f"{folder}/{key_or_hash}"
+
+        response = self._client.get_object(Bucket=self._bucket_name, Key=key)
+        return response["Body"].read()
+
+    def delete_file(self, key_or_hash: str, folder: str | None = "raw") -> None:
+        """
+        Delete a file from R2.
+
+        Args:
+            key_or_hash: Either a full key path (if folder is None) or content hash
+            folder: Source folder or None for custom key path
+        """
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{key_or_hash}.webp"
+        else:
+            key = f"{folder}/{key_or_hash}"
+
+        self._client.delete_object(Bucket=self._bucket_name, Key=key)
+
+    def delete_processed_folder(self, content_hash: str) -> None:
+        """
+        Delete all processed files for a resource.
+
+        Args:
+            content_hash: SHA-256 hash of the resource
+        """
+        prefix = f"processed/{content_hash}/"
+
+        # List all objects with this prefix
+        paginator = self._client.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket_name, Prefix=prefix):
+            if "Contents" in page:
+                objects = [{"Key": obj["Key"]} for obj in page["Contents"]]
+                if objects:
+                    self._client.delete_objects(
+                        Bucket=self._bucket_name,
+                        Delete={"Objects": objects},
+                    )
+
+    def file_exists(self, content_hash: str, folder: str = "raw") -> bool:
+        """
+        Check if a file exists in R2.
+
+        Args:
+            content_hash: SHA-256 hash of the file
+            folder: Source folder
+
+        Returns:
+            True if file exists
+        """
+        if folder == "raw":
+            key = f"raw/{content_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{content_hash}.webp"
+        else:
+            key = f"{folder}/{content_hash}"
+
+        try:
+            self._client.head_object(Bucket=self._bucket_name, Key=key)
+            return True
+        except self._client.exceptions.ClientError:
+            return False
+
+    def folder_exists(self, prefix: str) -> bool:
+        """
+        Check if a folder (prefix) has any files in R2.
+
+        Args:
+            prefix: The folder prefix to check (e.g., "temp/abc123")
+
+        Returns:
+            True if folder has at least one file
+        """
+        # Ensure prefix ends with /
+        if not prefix.endswith("/"):
+            prefix = prefix + "/"
+
+        response = self._client.list_objects_v2(
+            Bucket=self._bucket_name,
+            Prefix=prefix,
+            MaxKeys=1,
+        )
+        return response.get("KeyCount", 0) > 0
+
+    @staticmethod
+    def compute_hash(file: BinaryIO, chunk_size: int = 8192) -> str:
+        """
+        Compute SHA-256 hash of file content.
+
+        Args:
+            file: File-like object
+            chunk_size: Read chunk size in bytes
+
+        Returns:
+            Hex-encoded SHA-256 hash
+        """
+        sha256 = hashlib.sha256()
+        file.seek(0)
+        while chunk := file.read(chunk_size):
+            sha256.update(chunk)
+        file.seek(0)  # Reset for potential re-read
+        return sha256.hexdigest()
+
+    def upload_thumbnail(self, image_bytes: bytes, content_hash: str) -> None:
+        """
+        Upload a thumbnail image to R2.
+
+        Args:
+            image_bytes: WebP image bytes
+            content_hash: SHA-256 hash of the original PDF
+        """
+        from io import BytesIO
+
+        self.upload_file(
+            BytesIO(image_bytes),
+            content_hash,
+            folder="thumbnails",
+            content_type="image/webp",
+        )
+
+    def upload_processed_page(
+        self,
+        markdown_content: str,
+        content_hash: str,
+        page_number: int,
+    ) -> None:
+        """
+        Upload a processed page (markdown) to R2.
+
+        Args:
+            markdown_content: Extracted text as markdown
+            content_hash: SHA-256 hash of the original PDF
+            page_number: Page number (1-indexed)
+        """
+        from io import BytesIO
+
+        key = f"processed/{content_hash}/page_{page_number:04d}.md"
+        self._client.upload_fileobj(
+            BytesIO(markdown_content.encode("utf-8")),
+            self._bucket_name,
+            key,
+            ExtraArgs={"ContentType": "text/markdown"},
+        )
