@@ -419,7 +419,9 @@ class WorkerSettings:
         cron(check_stale_extractions, minute={0, 15, 30, 45}),  # Every 15 minutes
     ]
     redis_settings = _get_worker_redis_settings()
+    queue_name = "glot:extraction_queue"
     max_jobs = 4  # Process 4 page jobs concurrently
     job_timeout = 600  # 10 minute timeout per page
-    keep_result = 3600  # Keep results for 1 hour
-    health_check_interval = 30
+    keep_result = 0  # Don't keep results in Redis (saves space/commands)
+    health_check_interval = 600  # Check health every 10 minutes (saves commands)
+    poll_delay = 5  # Poll for new jobs every 5s instead of 0.5s (saves ~90% of commands)

@@ -8,6 +8,7 @@ Provides a unified interface for Redis operations including:
 """
 
 from typing import Any
+from urllib.parse import urlparse
 
 from arq import create_pool
 from arq.connections import ArqRedis, RedisSettings
@@ -42,31 +43,32 @@ class RedisService:
         self._redis_url = redis_url
         self._redis_settings = self._parse_url(redis_url)
         self._pool: ArqRedis | None = None
+        self._default_queue_name = "glot:extraction_queue"
 
     @staticmethod
     def _parse_url(url: str) -> RedisSettings:
-        """Parse redis:// URL into RedisSettings."""
-        # Remove redis:// prefix
-        if url.startswith("redis://"):
-            url = url[8:]
+        """Parse redis:// or rediss:// URL into RedisSettings."""
+        parsed = urlparse(url)
 
-        # Handle redis://host:port/db format
-        if ":" in url:
-            host, rest = url.split(":", 1)
-            port_str = rest.split("/")[0]
-            port = int(port_str)
-        else:
-            host = url.split("/")[0]
-            port = 6379
+        # Determine SSL
+        ssl = parsed.scheme == "rediss"
 
-        # Extract database number if present
+        # Extract database
         db = 0
-        if "/" in url:
-            db_str = url.split("/")[-1]
-            if db_str.isdigit():
-                db = int(db_str)
+        if parsed.path:
+            try:
+                db = int(parsed.path.lstrip("/"))
+            except ValueError:
+                pass
 
-        return RedisSettings(host=host, port=port, database=db)
+        return RedisSettings(
+            host=parsed.hostname or "localhost",
+            port=parsed.port or 6379,
+            database=db,
+            username=parsed.username,
+            password=parsed.password,
+            ssl=ssl,
+        )
 
     @property
     def redis_settings(self) -> RedisSettings:
@@ -76,7 +78,9 @@ class RedisService:
     async def connect(self) -> None:
         """Establish connection to Redis."""
         if self._pool is None:
-            self._pool = await create_pool(self._redis_settings)
+            self._pool = await create_pool(
+                self._redis_settings, default_queue_name=self._default_queue_name
+            )
             logger.debug("Redis connection established")
 
     async def close(self) -> None:
