@@ -4,9 +4,7 @@ import {
   FileText,
   MoreVertical,
   Sparkles,
-  Check,
   Loader2,
-  AlertCircle,
   Trash2,
   Eye,
   EyeOff,
@@ -27,14 +25,9 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-import { resourcesApi, type Resource, type ExtractionStatus } from "@/lib/api/resources";
-import { PDFViewer } from "./pdf-viewer";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { type Resource } from "@/lib/api/resources";
+import { ResourceDetailModal } from "./resource-detail-modal";
 
 interface ResourceCardProps {
   resource: Resource;
@@ -44,6 +37,7 @@ interface ResourceCardProps {
   onDelete?: (id: number) => void;
   onToggleVisibility?: (id: number, isPublic: boolean) => void;
   onAddToLibrary?: (id: number, name: string) => void;
+  onResourceUpdated?: (resource: Resource) => void;
   extractionProgress?: number;
 }
 
@@ -55,18 +49,22 @@ export function ResourceCard({
   onDelete,
   onToggleVisibility,
   onAddToLibrary,
+  onResourceUpdated,
   extractionProgress,
 }: ResourceCardProps) {
-  const [showPdf, setShowPdf] = useState(false);
-  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [showDetail, setShowDetail] = useState(false);
 
-  const handleCardClick = async () => {
-    try {
-      const url = await resourcesApi.getDownloadUrl(resource.id);
-      setPdfUrl(url);
-      setShowPdf(true);
-    } catch (e) {
-      console.error(e);
+  const handleCardClick = () => {
+    setShowDetail(true);
+  };
+
+  const handleResourceUpdated = (updated: Resource) => {
+    // Notify parent and also update visibility if changed
+    if (onResourceUpdated) {
+      onResourceUpdated(updated);
+    }
+    if (onToggleVisibility && updated.is_public !== resource.is_public) {
+      onToggleVisibility(updated.id, updated.is_public);
     }
   };
 
@@ -273,14 +271,15 @@ export function ResourceCard({
             </div>
           </div>
         </Card>
-        {pdfUrl && (
-          <PDFViewer
-            url={pdfUrl}
-            title={resource.name}
-            open={showPdf}
-            onOpenChange={setShowPdf}
-          />
-        )}
+        <ResourceDetailModal
+          resource={resource}
+          open={showDetail}
+          onOpenChange={setShowDetail}
+          onResourceUpdated={handleResourceUpdated}
+          onExtract={onExtract}
+          extractionProgress={extractionProgress}
+          isMyLibrary={isMyLibrary}
+        />
       </TooltipProvider>
     );
   }
@@ -320,36 +319,20 @@ export function ResourceCard({
 
           {/* Overlay on hover */}
           <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col justify-end p-3">
-            <div className="flex items-center justify-between">
-              {isMyLibrary && canExtract && (
-                <Button
-                  variant={isFailed ? "destructive" : "secondary"}
-                  size="sm"
-                  className="text-xs cursor-pointer transition-all hover:scale-105 hover:shadow-lg hover:shadow-primary/50 hover:brightness-110"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onExtract?.(resource.id);
-                  }}
-                >
-                  <Sparkles className="h-3 w-3 mr-1" />
-                  {isFailed ? "Resume" : "Extract"}
-                </Button>
-              )}
-              {!isMyLibrary && (
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  className="text-xs"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onAddToLibrary?.(resource.id, resource.name);
-                  }}
-                >
-                  <Plus className="h-3 w-3 mr-1" />
-                  Add
-                </Button>
-              )}
-            </div>
+            {!isMyLibrary && (
+              <Button
+                variant="secondary"
+                size="sm"
+                className="text-xs"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onAddToLibrary?.(resource.id, resource.name);
+                }}
+              >
+                <Plus className="h-3 w-3 mr-1" />
+                Add
+              </Button>
+            )}
           </div>
 
           {/* Public badge */}
@@ -387,14 +370,15 @@ export function ResourceCard({
           )}
         </CardContent>
       </Card>
-      {pdfUrl && (
-        <PDFViewer
-          url={pdfUrl}
-          title={resource.name}
-          open={showPdf}
-          onOpenChange={setShowPdf}
-        />
-      )}
+      <ResourceDetailModal
+        resource={resource}
+        open={showDetail}
+        onOpenChange={setShowDetail}
+        onResourceUpdated={handleResourceUpdated}
+        onExtract={onExtract}
+        extractionProgress={extractionProgress}
+        isMyLibrary={isMyLibrary}
+      />
     </TooltipProvider>
   );
 }

@@ -26,6 +26,7 @@ export interface ResourceListResponse {
 
 export interface UploadRequest {
   name: string;
+  file_name: string;
   size_bytes: number;
   content_hash: string;
   page_count: number;

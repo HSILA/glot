@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, KeyboardEvent } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import {
   ChevronLeft,
@@ -12,6 +12,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -35,6 +36,7 @@ interface PDFViewerProps {
 export function PDFViewer({ url, title, open, onOpenChange }: PDFViewerProps) {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageInput, setPageInput] = useState("1");
   const [scale, setScale] = useState(1.0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,11 +55,45 @@ export function PDFViewer({ url, title, open, onOpenChange }: PDFViewerProps) {
     setError(err.message);
   }, []);
 
-  const goToPrevPage = () => setCurrentPage((p) => Math.max(1, p - 1));
-  const goToNextPage = () => setCurrentPage((p) => Math.min(numPages, p + 1));
+  const goToPage = (page: number) => {
+    const clampedPage = Math.max(1, Math.min(numPages, page));
+    setCurrentPage(clampedPage);
+    setPageInput(String(clampedPage));
+  };
+
+  const goToPrevPage = () => goToPage(currentPage - 1);
+  const goToNextPage = () => goToPage(currentPage + 1);
   const zoomIn = () => setScale((s) => Math.min(2.5, s + 0.25));
   const zoomOut = () => setScale((s) => Math.max(0.5, s - 0.25));
   const resetZoom = () => setScale(1.0);
+
+  const handlePageInputChange = (value: string) => {
+    // Only allow numbers
+    if (/^\d*$/.test(value)) {
+      setPageInput(value);
+    }
+  };
+
+  const handlePageInputKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "Enter") {
+      const page = parseInt(pageInput, 10);
+      if (!isNaN(page) && page >= 1 && page <= numPages) {
+        goToPage(page);
+      } else {
+        // Reset to current page if invalid
+        setPageInput(String(currentPage));
+      }
+    }
+  };
+
+  const handlePageInputBlur = () => {
+    const page = parseInt(pageInput, 10);
+    if (!isNaN(page) && page >= 1 && page <= numPages) {
+      goToPage(page);
+    } else {
+      setPageInput(String(currentPage));
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -92,9 +128,22 @@ export function PDFViewer({ url, title, open, onOpenChange }: PDFViewerProps) {
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
-            <span className="text-sm min-w-[80px] text-center">
-              {currentPage} / {numPages || "..."}
-            </span>
+
+            {/* Page Input */}
+            <div className="flex items-center gap-1">
+              <Input
+                type="text"
+                value={pageInput}
+                onChange={(e) => handlePageInputChange(e.target.value)}
+                onKeyDown={handlePageInputKeyDown}
+                onBlur={handlePageInputBlur}
+                className="h-8 w-14 text-center text-sm"
+              />
+              <span className="text-sm text-muted-foreground">
+                / {numPages || "..."}
+              </span>
+            </div>
+
             <Button
               variant="outline"
               size="icon"
@@ -169,28 +218,6 @@ export function PDFViewer({ url, title, open, onOpenChange }: PDFViewerProps) {
               renderAnnotationLayer={true}
             />
           </Document>
-        </div>
-
-        {/* Page Thumbnails (optional mini-nav) */}
-        <div className="flex items-center justify-center gap-1 px-4 py-2 border-t bg-muted/30 flex-shrink-0 overflow-x-auto">
-          {Array.from({ length: Math.min(numPages, 10) }, (_, i) => i + 1).map(
-            (page) => (
-              <Button
-                key={page}
-                variant={currentPage === page ? "secondary" : "ghost"}
-                size="sm"
-                onClick={() => setCurrentPage(page)}
-                className="h-7 w-7 p-0 text-xs"
-              >
-                {page}
-              </Button>
-            )
-          )}
-          {numPages > 10 && (
-            <span className="text-xs text-muted-foreground ml-2">
-              +{numPages - 10} more
-            </span>
-          )}
         </div>
       </DialogContent>
     </Dialog>

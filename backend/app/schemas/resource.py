@@ -12,7 +12,8 @@ from app.models.resource import ExtractionStatus
 class UploadRequest(BaseModel):
     """Request to initiate a file upload."""
 
-    name: str = Field(..., min_length=1, max_length=255, description="Resource name")
+    name: str = Field(..., min_length=1, max_length=255, description="User's custom name for the resource")
+    file_name: str = Field(..., min_length=1, max_length=255, description="Original file name")
     size_bytes: int = Field(..., gt=0, description="File size in bytes")
     content_hash: str = Field(
         ...,

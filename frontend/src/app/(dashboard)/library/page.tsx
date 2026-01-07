@@ -159,6 +159,10 @@ export default function LibraryPage() {
     }
   };
 
+  const handleResourceUpdated = (updated: Resource) => {
+    setMyResources((prev) => prev.map((r) => (r.id === updated.id ? updated : r)));
+  };
+
   const handleAddToLibrary = async (id: number, name: string) => {
     try {
       await resourcesApi.addPublicResource(id, name);
@@ -219,6 +223,9 @@ export default function LibraryPage() {
           onToggleVisibility={
             activeTab === "my" ? handleToggleVisibility : undefined
           }
+          onResourceUpdated={
+            activeTab === "my" ? handleResourceUpdated : undefined
+          }
           onAddToLibrary={activeTab === "public" ? handleAddToLibrary : undefined}
           extractionProgress={
             activeTab === "my" ? extractionProgress[resource.id] : undefined
@@ -240,6 +247,9 @@ export default function LibraryPage() {
           onDelete={activeTab === "my" ? handleDelete : undefined}
           onToggleVisibility={
             activeTab === "my" ? handleToggleVisibility : undefined
+          }
+          onResourceUpdated={
+            activeTab === "my" ? handleResourceUpdated : undefined
           }
           onAddToLibrary={activeTab === "public" ? handleAddToLibrary : undefined}
           extractionProgress={

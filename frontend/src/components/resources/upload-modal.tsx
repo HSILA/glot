@@ -131,6 +131,7 @@ export function UploadModal({
       setUploadState("uploading");
       const uploadResponse = await resourcesApi.requestUpload({
         name: name.trim(),
+        file_name: file.name,  // Original filename
         size_bytes: file.size,
         content_hash: contentHash,
         page_count: pageCount,

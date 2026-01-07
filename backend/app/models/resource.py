@@ -66,9 +66,9 @@ class Resource(SQLModel, table=True):
         default=None,
         description="Number of pages in PDF",
     )
-    display_name: str = Field(
+    file_name: str = Field(
         max_length=255,
-        description="Original uploader's name for this resource (used in public search)",
+        description="Original filename from upload (immutable)",
     )
 
     # Visibility

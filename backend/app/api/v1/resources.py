@@ -138,7 +138,7 @@ async def request_upload(
         content_hash=request.content_hash,
         size_bytes=request.size_bytes,
         page_count=request.page_count,
-        display_name=request.name,
+        file_name=request.file_name,  # Store original filename
         is_public=request.is_public,
         extraction_status=ExtractionStatus.NONE,
         uploaded_by=current_user.id,
@@ -146,11 +146,11 @@ async def request_upload(
     session.add(resource)
     await session.flush()
 
-    # Create user_resource link
+    # Create user_resource link with custom name
     user_resource = UserResource(
         user_id=current_user.id,
         resource_id=resource.id,
-        name=request.name,
+        name=request.name,  # Store user's custom name
     )
     session.add(user_resource)
     await session.flush()
@@ -295,7 +295,7 @@ async def list_public_resources(
     base_query = select(Resource).where(Resource.is_public == True)  # noqa: E712
 
     if search:
-        base_query = base_query.where(Resource.display_name.ilike(f"%{search}%"))
+        base_query = base_query.where(Resource.file_name.ilike(f"%{search}%"))
 
     # Count total
     count_query = select(func.count()).select_from(base_query.subquery())
@@ -315,11 +315,19 @@ async def list_public_resources(
     ur_result = await session.execute(user_resources_query)
     user_resources = {ur.resource_id: ur for ur in ur_result.scalars().all()}
 
+    # Get uploader's custom names
+    uploader_names_query = select(UserResource).where(
+        UserResource.resource_id.in_([r.id for r in resources]),
+        UserResource.user_id.in_([r.uploaded_by for r in resources]),
+    )
+    uploader_result = await session.execute(uploader_names_query)
+    uploader_names = {ur.resource_id: ur.name for ur in uploader_result.scalars().all()}
+
     items = []
     for resource in resources:
         ur = user_resources.get(resource.id)
-        # Use user's custom name or uploader's display_name
-        name = ur.name if ur else resource.display_name
+        # Priority: 1) Current user's custom name, 2) Uploader's custom name, 3) File name
+        name = ur.name if ur else uploader_names.get(resource.id, resource.file_name)
         items.append(
             ResourceRead(
                 id=resource.id,
@@ -367,7 +375,7 @@ async def get_resource(
             detail="Not authorized",
         )
 
-    name = user_resource.name if user_resource else resource.display_name
+    name = user_resource.name if user_resource else resource.file_name
     return ResourceRead(
         id=resource.id,
         content_hash=resource.content_hash,
@@ -483,6 +491,7 @@ async def update_resource(
         resource.is_public = request.is_public
 
     await session.flush()
+    await session.commit()
     await session.refresh(resource)
     await session.refresh(user_resource)
 
@@ -583,7 +592,7 @@ async def get_download_url(
         )
 
     # Generate presigned download URL
-    name = user_resource.name if user_resource else resource.display_name
+    name = user_resource.name if user_resource else resource.file_name
     url = storage.generate_download_url(
         resource.content_hash,
         folder="raw",
