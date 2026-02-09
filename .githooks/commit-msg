@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Enforce conventional-ish commit message format.
+# See scripts/validate-commit-message.sh
+
+msg_file="$1"
+exec "$(git rev-parse --show-toplevel)/scripts/validate-commit-message.sh" "$msg_file"

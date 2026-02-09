@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Validate commit messages for commits being pushed.
+# Git passes lines on stdin: <local ref> <local sha> <remote ref> <remote sha>
+
+repo_root="$(git rev-parse --show-toplevel)"
+validator="$repo_root/scripts/validate-commit-message.sh"
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  # Deletions: local_sha is all zeros
+  if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+    continue
+  fi
+
+  # New branch push: remote_sha is all zeros -> validate all commits reachable from local_sha
+  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+    range="$local_sha"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+
+  "$validator" --range "$range"
+done
