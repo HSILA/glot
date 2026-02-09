@@ -95,3 +95,16 @@ Adminer UI: http://localhost:8080
 - ✅ Frontend (Next.js PWA)
 - 🚧 FSRS optimizer
 - 🚧 Anki export
+## Git hooks (commit message policy)
+
+This repo enforces a commit message format:
+
+- First line: `<type>: <title>` where type is one of `fix|feature|chore|style|refactor|docs|test|perf|build|ci|revert`
+- Second line: empty
+- Then one bullet per change, each starting with `- `
+
+To enable local enforcement, run:
+
+```bash
+./scripts/setup-githooks.sh
+```
