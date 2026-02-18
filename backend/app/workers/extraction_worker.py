@@ -4,7 +4,13 @@ Extraction worker for ARQ background jobs.
 Architecture:
 - prepare_extraction: Renders PDF pages to images, creates page records, queues page jobs
 - extract_page: Processes a single page (atomic, retryable)
-- check_stale_extractions: Cron job to re-queue stuck pages
+- check_stale_extractions: Cron job to re-queue stuck pages (5 min threshold)
+- check_orphan_resources: Cron job to fix resources stuck in PROCESSING
+- on_worker_startup: Runs recovery checks immediately on worker start
+
+Recovery behavior:
+- On startup: Immediately recovers stuck pages and orphan resources
+- Via cron: Every 15 minutes for stale pages and orphan resources
 
 Run with:
     arq app.workers.extraction_worker.WorkerSettings
@@ -352,13 +358,16 @@ async def check_stale_extractions(ctx: dict):
 
     A page is considered stuck if:
     - Status is PROCESSING
-    - Started more than 10 minutes ago
+    - Started more than 5 minutes ago (stale threshold)
+
+    This catches pages that got stuck due to API timeouts, network issues,
+    or other transient failures during extraction.
     """
     settings = get_settings()
     redis = RedisService(settings.redis_url)
     await redis.connect()
 
-    stale_threshold = utc_now() - timedelta(minutes=10)
+    stale_threshold = utc_now() - timedelta(minutes=5)
 
     logger.info("Checking for stale extractions...")
 
@@ -411,10 +420,31 @@ def _get_worker_redis_settings():
     return redis.redis_settings
 
 
+async def on_worker_startup(ctx: dict):
+    """
+    Run recovery checks immediately when worker starts.
+
+    This ensures crashed extractions are recovered without waiting
+    for the cron schedule.
+    """
+    logger.info("Worker startup: running recovery checks...")
+    
+    # Check for stuck pages
+    stale_result = await check_stale_extractions(ctx)
+    logger.info(f"Stale extractions check: {stale_result}")
+    
+    # Check for orphan resources
+    orphan_result = await check_orphan_resources(ctx)
+    logger.info(f"Orphan resources check: {orphan_result}")
+    
+    logger.info("Worker startup recovery complete")
+
+
 class WorkerSettings:
     """ARQ worker settings."""
 
     functions = [prepare_extraction, extract_page]
+    on_startup = on_worker_startup
     cron_jobs = [
         cron(check_stale_extractions, minute={0, 15, 30, 45}),  # Every 15 minutes
     ]
