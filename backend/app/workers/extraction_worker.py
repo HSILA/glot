@@ -242,6 +242,21 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
             try:
                 png_bytes = storage.download_file(temp_path, folder=None)
             except Exception as e:
+                # Temp file might be missing if extraction completed but commit failed
+                # Check if processed markdown already exists
+                try:
+                    processed_path = f"processed/{resource.content_hash}/page_{page_number}.md"
+                    existing_markdown = storage.download_file(processed_path, folder=None)
+                    if existing_markdown:
+                        logger.info(f"Page {page_number} already processed (temp file deleted), marking complete")
+                        page.status = PageStatus.COMPLETED
+                        page.completed_at = utc_now()
+                        page.last_error = None
+                        await session.commit()
+                        return {"success": True, "page": page_number, "recovered": True}
+                except Exception:
+                    pass  # Processed file doesn't exist either
+                
                 page.last_error = f"Failed to download page image: {e}"
                 page.status = PageStatus.PENDING  # Allow retry
                 await session.commit()
@@ -264,12 +279,6 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
                     page_number,
                 )
 
-                # Delete temp PNG to save storage
-                try:
-                    storage.delete_file(temp_path, folder=None)
-                except Exception as e:
-                    logger.warning(f"Failed to delete temp file {temp_path}: {e}")
-
                 # Mark as completed
                 page.status = PageStatus.COMPLETED
                 page.completed_at = utc_now()
@@ -290,6 +299,13 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
             await _update_resource_progress(session, redis, resource_id)
 
             await session.commit()
+            
+            # Delete temp PNG AFTER successful commit to avoid losing file on crash
+            if result.success:
+                try:
+                    storage.delete_file(temp_path, folder=None)
+                except Exception as e:
+                    logger.warning(f"Failed to delete temp file {temp_path}: {e}")
 
             return {"success": result.success, "page": page_number}
 
