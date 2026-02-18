@@ -495,6 +495,60 @@ def _get_worker_redis_settings():
     return redis.redis_settings
 
 
+async def recover_incomplete_extractions(ctx: dict):
+    """
+    Recover resources in PROCESSING state with incomplete pages.
+    
+    This handles the case where worker crashes mid-extraction:
+    - Resource is in PROCESSING state
+    - Some pages are PENDING (never got queued or started)
+    
+    Simply calls prepare_extraction which is idempotent and will requeue
+    any incomplete pages.
+    """
+    logger.info("Recovering incomplete extractions...")
+    
+    async with async_session_factory() as session:
+        try:
+            # Find resources in PROCESSING state
+            result = await session.execute(
+                select(Resource).where(
+                    Resource.extraction_status == ExtractionStatus.PROCESSING
+                )
+            )
+            processing_resources = result.scalars().all()
+            
+            if not processing_resources:
+                logger.info("No incomplete extractions found")
+                return {"recovered": 0}
+            
+            recovered = 0
+            for resource in processing_resources:
+                # Check if any pages are incomplete
+                incomplete_result = await session.execute(
+                    select(func.count()).where(
+                        PageExtraction.resource_id == resource.id,
+                        PageExtraction.status != PageStatus.COMPLETED,
+                    )
+                )
+                incomplete_count = incomplete_result.scalar() or 0
+                
+                if incomplete_count > 0:
+                    logger.info(
+                        f"Recovering resource {resource.id}: {incomplete_count} incomplete pages"
+                    )
+                    # Re-run prepare_extraction to requeue incomplete pages
+                    await prepare_extraction(ctx, resource.id)
+                    recovered += 1
+            
+            logger.info(f"Recovered {recovered} incomplete extractions")
+            return {"recovered": recovered}
+            
+        except Exception as e:
+            logger.exception(f"Error recovering incomplete extractions: {e}")
+            return {"error": str(e)}
+
+
 async def on_worker_startup(ctx: dict):
     """
     Run recovery checks immediately when worker starts.
@@ -504,13 +558,17 @@ async def on_worker_startup(ctx: dict):
     """
     logger.info("Worker startup: running recovery checks...")
     
-    # Check for stuck pages
+    # Check for stuck pages (PROCESSING > 5 min)
     stale_result = await check_stale_extractions(ctx)
     logger.info(f"Stale extractions check: {stale_result}")
     
-    # Check for orphan resources
+    # Check for orphan resources (all pages done but resource still PROCESSING)
     orphan_result = await check_orphan_resources(ctx)
     logger.info(f"Orphan resources check: {orphan_result}")
+    
+    # Recover incomplete extractions (PROCESSING with PENDING pages)
+    incomplete_result = await recover_incomplete_extractions(ctx)
+    logger.info(f"Incomplete extractions check: {incomplete_result}")
     
     logger.info("Worker startup recovery complete")
 
