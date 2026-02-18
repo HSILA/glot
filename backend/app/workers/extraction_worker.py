@@ -429,6 +429,81 @@ async def check_stale_extractions(ctx: dict):
             await redis.close()
 
 
+async def check_orphan_resources(ctx: dict):
+    """
+    Cron job: Fix resources stuck in PROCESSING when all pages are done.
+
+    This can happen if the worker crashes between committing page status
+    and committing resource status updates.
+    """
+    settings = get_settings()
+    redis = RedisService(settings.redis_url)
+    await redis.connect()
+
+    logger.info("Checking for orphan resources...")
+
+    async with async_session_factory() as session:
+        try:
+            # Find resources in PROCESSING state
+            result = await session.execute(
+                select(Resource).where(
+                    Resource.extraction_status == ExtractionStatus.PROCESSING
+                )
+            )
+            processing_resources = result.scalars().all()
+
+            if not processing_resources:
+                logger.info("No processing resources found")
+                return {"fixed": 0}
+
+            fixed = 0
+            for resource in processing_resources:
+                # Count total and completed pages for this resource
+                total_result = await session.execute(
+                    select(func.count()).where(
+                        PageExtraction.resource_id == resource.id
+                    )
+                )
+                total = total_result.scalar() or 0
+
+                completed_result = await session.execute(
+                    select(func.count()).where(
+                        PageExtraction.resource_id == resource.id,
+                        PageExtraction.status == PageStatus.COMPLETED,
+                    )
+                )
+                completed = completed_result.scalar() or 0
+
+                # If all pages are done, mark resource as completed
+                if total > 0 and completed == total:
+                    resource.extraction_status = ExtractionStatus.COMPLETED
+                    resource.processed_at = utc_now()
+                    fixed += 1
+                    logger.info(
+                        f"Fixed orphan resource {resource.id}: all {total} pages completed"
+                    )
+
+                    # Update Redis progress to completed
+                    await redis.set_progress(
+                        resource.id,
+                        status="completed",
+                        progress=100,
+                        current_page=total,
+                        total_pages=total,
+                    )
+
+            await session.commit()
+
+            logger.info(f"Fixed {fixed} orphan resources")
+            return {"fixed": fixed}
+
+        except Exception as e:
+            logger.exception(f"Error checking orphan resources: {e}")
+            return {"error": str(e)}
+        finally:
+            await redis.close()
+
+
 def _get_worker_redis_settings():
     """Get Redis settings for worker initialization."""
     settings = get_settings()
@@ -521,6 +596,7 @@ class WorkerSettings:
     on_startup = on_worker_startup
     cron_jobs = [
         cron(check_stale_extractions, minute={0, 15, 30, 45}),  # Every 15 minutes
+        cron(check_orphan_resources, minute={5, 20, 35, 50}),  # Every 15 minutes, offset
     ]
     redis_settings = _get_worker_redis_settings()
     queue_name = "glot:extraction_queue"
