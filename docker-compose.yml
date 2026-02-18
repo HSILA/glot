@@ -17,6 +17,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional: Comment out if using a cloud Redis provider (e.g., Upstash)
   redis:
     image: redis:7-alpine
     container_name: glot-redis
@@ -31,6 +32,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # Optional: Comment out if you don't need a database UI
   adminer:
     image: adminer:latest
     container_name: glot-adminer
@@ -42,25 +44,70 @@ services:
     depends_on:
       - postgres
 
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: glot-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      # Override for Docker networking
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/glot"
+      DATABASE_URL_SYNC: "postgresql+psycopg2://postgres:postgres@postgres:5432/glot"
+      # For local Redis: use the line below
+      # REDIS_URL: "redis://redis:6379"
+      # For cloud Redis (e.g., Upstash): set REDIS_URL in .env file
+      CORS_ORIGINS: '["http://localhost:3000","http://frontend:3000"]'
+    depends_on:
+      postgres:
+        condition: service_healthy
+      # Uncomment redis dependency if using local Redis
+      # redis:
+      #   condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: glot-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      # Backend URL for server-side API calls in Docker
+      - BACKEND_URL=http://backend:8000
+    depends_on:
+      - backend
+
+  # Optional: Comment out if you don't need PDF extraction
   worker:
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: glot-worker
     restart: unless-stopped
-    command: ["arq", "app.workers.extraction_worker.WorkerSettings"]
+    command: ["uv", "run", "arq", "app.workers.extraction_worker.WorkerSettings"]
     env_file:
       - ./backend/.env
+    environment:
+      # Override for Docker networking
+      DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/glot"
+      DATABASE_URL_SYNC: "postgresql+psycopg2://postgres:postgres@postgres:5432/glot"
+      # For local Redis: use the line below
+      # REDIS_URL: "redis://redis:6379"
+      # For cloud Redis (e.g., Upstash): set REDIS_URL in .env file
     depends_on:
-      redis:
-        condition: service_healthy
       postgres:
         condition: service_healthy
-    deploy:
-      replicas: 2  # Scale workers as needed
+      # Uncomment redis dependency if using local Redis
+      # redis:
+      #   condition: service_healthy
 
 volumes:
   postgres_data:
   redis_data:
-
-
