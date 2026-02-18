@@ -12,12 +12,12 @@ Endpoints:
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.dependencies import get_async_session
-from app.models import Deck
+from app.dependencies import get_async_session, get_current_user
+from app.models import Deck, User
 from app.schemas import DeckCreate, DeckRead, DeckUpdate
 
 router = APIRouter()
@@ -26,6 +26,7 @@ router = APIRouter()
 @router.get("", response_model=list[DeckRead])
 async def list_decks(
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
     parent_id: int | None = Query(None, description="Filter by parent deck"),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
@@ -35,7 +36,7 @@ async def list_decks(
 
     Use parent_id=None to get root-level decks only.
     """
-    query = select(Deck)
+    query = select(Deck).where(Deck.user_id == current_user.id)
 
     if parent_id is not None:
         query = query.where(Deck.parent_id == parent_id)
@@ -49,9 +50,13 @@ async def list_decks(
 async def get_deck(
     deck_id: int,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Get a single deck by ID."""
-    deck = await session.get(Deck, deck_id)
+    """Get a single deck by ID (owned by current user)."""
+    result = await session.execute(
+        select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
+    )
+    deck = result.scalar_one_or_none()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
     return deck
@@ -61,15 +66,26 @@ async def get_deck(
 async def create_deck(
     deck_data: DeckCreate,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Create a new deck."""
-    # Validate parent exists if specified
-    if deck_data.parent_id:
-        parent = await session.get(Deck, deck_data.parent_id)
+    """Create a new deck owned by the current user."""
+    # Validate parent exists and is owned by the current user if specified
+    if deck_data.parent_id is not None:
+        parent_result = await session.execute(
+            select(Deck).where(
+                Deck.id == deck_data.parent_id,
+                Deck.user_id == current_user.id,
+            )
+        )
+        parent = parent_result.scalar_one_or_none()
         if not parent:
-            raise HTTPException(status_code=400, detail="Parent deck not found")
+            # 404 to avoid leaking existence/ownership
+            raise HTTPException(status_code=404, detail="Parent deck not found")
 
-    deck = Deck(**deck_data.model_dump())
+    deck = Deck(
+        user_id=current_user.id,
+        **deck_data.model_dump(),
+    )
     session.add(deck)
     await session.flush()
     await session.refresh(deck)
@@ -81,19 +97,33 @@ async def update_deck(
     deck_id: int,
     deck_data: DeckUpdate,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Update an existing deck."""
-    deck = await session.get(Deck, deck_id)
+    """Update an existing deck (owned by current user)."""
+    result = await session.execute(
+        select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
+    )
+    deck = result.scalar_one_or_none()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
     # Validate parent if changing
     if deck_data.parent_id is not None:
         if deck_data.parent_id == deck_id:
-            raise HTTPException(status_code=400, detail="Deck cannot be its own parent")
-        parent = await session.get(Deck, deck_data.parent_id)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Deck cannot be its own parent",
+            )
+
+        parent_result = await session.execute(
+            select(Deck).where(
+                Deck.id == deck_data.parent_id,
+                Deck.user_id == current_user.id,
+            )
+        )
+        parent = parent_result.scalar_one_or_none()
         if not parent:
-            raise HTTPException(status_code=400, detail="Parent deck not found")
+            raise HTTPException(status_code=404, detail="Parent deck not found")
 
     update_data = deck_data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -109,13 +139,17 @@ async def update_deck(
 async def delete_deck(
     deck_id: int,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
     """
     Delete a deck.
 
     Note: Cards in this deck will have their deck_id set to null.
     """
-    deck = await session.get(Deck, deck_id)
+    result = await session.execute(
+        select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
+    )
+    deck = result.scalar_one_or_none()
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
