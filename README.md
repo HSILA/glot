@@ -96,16 +96,7 @@ To use cloud services, comment out the corresponding service in `docker-compose.
    cp backend/.env.example backend/.env
    ```
 
-2. Generate a JWT secret:
-   ```bash
-   openssl rand -hex 32
-   ```
-
-3. Update `backend/.env` with your values:
-   ```
-   JWT_SECRET="your-generated-secret-here"
-   REDIS_URL="rediss://default:PASSWORD@ENDPOINT.upstash.io:6379"  # If using Upstash
-   ```
+2. Fill in the required environment variables in `backend/.env` (database, Redis, R2, JWT secret, etc.)
 
 ## Project Structure
 
