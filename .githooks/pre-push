@@ -17,17 +17,14 @@ while read -r local_ref local_sha remote_ref remote_sha; do
     continue
   fi
 
-  if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-    # New branch or new remote ref.
-    if git show-ref --verify --quiet "refs/remotes/$base_branch"; then
-      base_sha="$(git merge-base "$local_sha" "$base_branch")"
-      range="$base_sha..$local_sha"
-    else
-      # Fallback: validate just the tip commit (best effort)
-      range="$local_sha^..$local_sha"
-    fi
+  # Always validate only the commits on the branch that are *not* already in origin/main.
+  # This avoids re-validating commits that exist on main (even if a branch was rebased/force-pushed).
+  if git show-ref --verify --quiet "refs/remotes/$base_branch"; then
+    base_sha="$(git merge-base "$local_sha" "$base_branch")"
+    range="$base_sha..$local_sha"
   else
-    range="$remote_sha..$local_sha"
+    # Fallback: validate just the tip commit (best effort)
+    range="$local_sha^..$local_sha"
   fi
 
   "$validator" --range "$range"
