@@ -8,7 +8,6 @@ services:
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: glot
     ports:
-      # SECURITY: bind to localhost so Postgres isn't exposed to the public internet by default
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
@@ -24,7 +23,6 @@ services:
     container_name: glot-redis
     restart: unless-stopped
     ports:
-      # SECURITY: bind to localhost so Redis isn't exposed to the public internet by default
       - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
@@ -40,7 +38,6 @@ services:
     container_name: glot-adminer
     restart: unless-stopped
     ports:
-      # SECURITY: bind to localhost so Adminer isn't exposed to the public internet by default
       - "127.0.0.1:8080:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
@@ -54,7 +51,6 @@ services:
     container_name: glot-backend
     restart: unless-stopped
     ports:
-      # SECURITY: bind to localhost so the backend isn't exposed to the public internet by default
       - "127.0.0.1:8000:8000"
     env_file:
       - ./backend/.env
@@ -80,7 +76,6 @@ services:
     container_name: glot-frontend
     restart: unless-stopped
     ports:
-      # SECURITY: bind to localhost so the frontend isn't exposed to the public internet by default
       - "127.0.0.1:3000:3000"
     environment:
       - NODE_ENV=production
