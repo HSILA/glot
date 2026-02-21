@@ -36,6 +36,8 @@ just status
 - API Docs: http://localhost:8000/docs
 - Database UI (Adminer): http://localhost:8080
 
+**Security note:** the default `docker-compose.yml` binds service ports to `127.0.0.1` (localhost) so Postgres/Adminer/etc. are *not* exposed to the public internet. If you need remote access, prefer a VPN (e.g. Tailscale) or explicitly re-bind ports with care.
+
 ### Option 2: Hybrid (Docker DB + Local Code)
 
 Run the database in Docker, but backend/frontend locally:
