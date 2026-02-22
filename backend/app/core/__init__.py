@@ -58,6 +58,10 @@ class Settings(BaseSettings):
     openrouter_api_key: str
     extraction_agent_model: str = "qwen/qwen-3-vl-235b-a22b-instruct"
 
+    # Extraction queues
+    extraction_prepare_queue: str = "glot:render_queue"
+    extraction_page_queue: str = "glot:extraction_queue"
+
 
 # Rate limiting
 RATE_LIMIT_LOGIN = "5/5minutes"

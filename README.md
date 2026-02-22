@@ -129,7 +129,8 @@ The following services can be disabled if not needed:
 
 - **adminer** — Database UI. Comment out if you don't need it.
 - **redis** — Required for PDF extraction worker. Use Upstash or comment out.
-- **worker** — Background PDF extraction. Comment out if not using this feature.
+- **worker-prepare** — Orchestration/rendering/recovery worker for PDF extraction.
+- **worker-extract** — Per-page PNG→markdown extraction worker.
 
 ## Development
 

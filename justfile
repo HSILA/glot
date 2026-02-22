@@ -27,9 +27,19 @@ dev:
     @echo "Starting backend and frontend..."
     @just dev-backend &
 
-# Start background worker locally
+# Start extraction prepare worker locally (render + orchestration + recovery cron)
+worker-prepare:
+    cd backend && uv run arq app.workers.extraction_worker.PrepareWorkerSettings
+
+# Start extraction page worker locally (PNG -> markdown page jobs)
+worker-extract:
+    cd backend && uv run arq app.workers.extraction_worker.ExtractWorkerSettings
+
+# Convenience alias
 worker:
-    cd backend && uv run arq app.workers.extraction_worker.WorkerSettings
+    @echo "Run both workers in separate terminals:"
+    @echo "  just worker-prepare"
+    @echo "  just worker-extract"
 
 # ─────────────────────────────────────────────────────────────
 # Docker

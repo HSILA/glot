@@ -21,7 +21,11 @@ class UploadRequest(BaseModel):
         max_length=64,
         description="SHA-256 hash of file content (computed client-side)",
     )
-    page_count: int = Field(..., gt=0, description="Number of pages in PDF")
+    page_count: int | None = Field(
+        default=None,
+        gt=0,
+        description="Optional client-estimated page count (backend computes authoritative value)",
+    )
     is_public: bool = Field(default=False, description="Whether resource is public")
 
 
