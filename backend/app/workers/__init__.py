@@ -1,14 +1,11 @@
 """
 Workers package for ARQ background jobs.
 
-Run workers with:
-    arq app.workers.extraction_worker.PrepareWorkerSettings
-    arq app.workers.extraction_worker.ExtractWorkerSettings
+Run the worker with:
+    arq app.workers.extraction_worker.WorkerSettings
 """
 
 from .extraction_worker import (
-    ExtractWorkerSettings,
-    PrepareWorkerSettings,
     WorkerSettings,
     check_orphan_resources,
     check_stale_extractions,
@@ -18,8 +15,6 @@ from .extraction_worker import (
 )
 
 __all__ = [
-    "PrepareWorkerSettings",
-    "ExtractWorkerSettings",
     "WorkerSettings",
     "prepare_extraction",
     "extract_page",

@@ -102,7 +102,6 @@ class RedisService:
         self,
         function_name: str,
         *args: Any,
-        queue_name: str | None = None,
         **kwargs: Any,
     ) -> str | None:
         """
@@ -111,15 +110,12 @@ class RedisService:
         Args:
             function_name: Name of the function to execute
             *args: Positional arguments for the function
-            queue_name: Optional ARQ queue name override
             **kwargs: Keyword arguments for the function
 
         Returns:
             Job ID if enqueued successfully, None otherwise
         """
         pool = await self._ensure_connected()
-        if queue_name:
-            kwargs["_queue_name"] = queue_name
         job = await pool.enqueue_job(function_name, *args, **kwargs)
         return job.job_id if job else None
 

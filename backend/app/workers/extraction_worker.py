@@ -9,8 +9,7 @@ Architecture:
 - recover_incomplete_extractions: Startup recovery for incomplete processing resources
 
 Run with:
-    arq app.workers.extraction_worker.PrepareWorkerSettings
-    arq app.workers.extraction_worker.ExtractWorkerSettings
+    arq app.workers.extraction_worker.WorkerSettings
 """
 
 import io
@@ -215,7 +214,6 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
                     "extract_page",
                     resource_id,
                     page.page_number,
-                    queue_name=settings.extraction_page_queue,
                 )
                 if job_id:
                     queued += 1
@@ -492,7 +490,6 @@ async def check_stale_extractions(ctx: dict):
                     "extract_page",
                     page.resource_id,
                     page.page_number,
-                    queue_name=settings.extraction_page_queue,
                 )
                 if job_id:
                     requeued += 1
@@ -640,7 +637,6 @@ async def recover_incomplete_extractions(ctx: dict):
                 job_id = await redis.enqueue_job(
                     "prepare_extraction",
                     resource.id,
-                    queue_name=settings.extraction_prepare_queue,
                 )
                 if job_id:
                     recovered += 1
@@ -658,9 +654,9 @@ async def recover_incomplete_extractions(ctx: dict):
             await redis.close()
 
 
-async def on_prepare_worker_startup(ctx: dict):
-    """Run recovery checks immediately when prepare worker starts."""
-    logger.info("Prepare worker startup: running recovery checks...")
+async def on_worker_startup(ctx: dict):
+    """Run recovery checks immediately when worker starts."""
+    logger.info("Worker startup: running recovery checks...")
 
     stale_result = await check_stale_extractions(ctx)
     logger.info(f"Stale extractions check: {stale_result}")
@@ -671,7 +667,7 @@ async def on_prepare_worker_startup(ctx: dict):
     incomplete_result = await recover_incomplete_extractions(ctx)
     logger.info(f"Incomplete extractions check: {incomplete_result}")
 
-    logger.info("Prepare worker startup recovery complete")
+    logger.info("Worker startup recovery complete")
 
 
 def _get_worker_redis_settings():
@@ -681,38 +677,19 @@ def _get_worker_redis_settings():
     return redis.redis_settings
 
 
-class PrepareWorkerSettings:
-    """ARQ worker for orchestration/preparation jobs."""
+class WorkerSettings:
+    """ARQ worker for extraction orchestration and page processing jobs."""
 
-    settings = get_settings()
-    functions = [prepare_extraction]
-    on_startup = on_prepare_worker_startup
+    functions = [prepare_extraction, extract_page]
+    on_startup = on_worker_startup
     cron_jobs = [
         cron(check_stale_extractions, minute={0, 15, 30, 45}),
         cron(check_orphan_resources, minute={5, 20, 35, 50}),
     ]
     redis_settings = _get_worker_redis_settings()
-    queue_name = settings.extraction_prepare_queue
-    max_jobs = 1
+    queue_name = "glot:extraction_queue"
+    max_jobs = 4
     job_timeout = 1200
     keep_result = 0
     health_check_interval = 600
     poll_delay = 5
-
-
-class ExtractWorkerSettings:
-    """ARQ worker for per-page extraction jobs."""
-
-    settings = get_settings()
-    functions = [extract_page]
-    redis_settings = _get_worker_redis_settings()
-    queue_name = settings.extraction_page_queue
-    max_jobs = 4
-    job_timeout = 600
-    keep_result = 0
-    health_check_interval = 600
-    poll_delay = 5
-
-
-# Backward-compatible alias (single command users can keep this target if desired).
-WorkerSettings = ExtractWorkerSettings

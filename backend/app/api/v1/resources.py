@@ -763,11 +763,7 @@ async def trigger_extraction(
 
     settings = get_settings()
     redis = RedisService(settings.redis_url)
-    job_id = await redis.enqueue_job(
-        "prepare_extraction",
-        resource_id,
-        queue_name=settings.extraction_prepare_queue,
-    )
+    job_id = await redis.enqueue_job("prepare_extraction", resource_id)
     await redis.close()
 
     return {

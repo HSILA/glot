@@ -49,10 +49,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.success("Database initialized successfully")
 
-    # NOTE: ARQ workers run as separate processes for non-blocking extraction
-    # Start them with:
-    #   uv run arq app.workers.extraction_worker.PrepareWorkerSettings
-    #   uv run arq app.workers.extraction_worker.ExtractWorkerSettings
+    # NOTE: ARQ worker runs as a separate process for non-blocking extraction
+    # Start it with: uv run arq app.workers.extraction_worker.WorkerSettings
     logger.info("API ready at http://localhost:8000")
     yield
 
