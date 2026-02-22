@@ -29,7 +29,6 @@ export interface UploadRequest {
   file_name: string;
   size_bytes: number;
   content_hash: string;
-  page_count: number;
   is_public: boolean;
 }
 
@@ -58,19 +57,7 @@ export async function computeFileHash(file: File): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * Get page count from PDF file.
- * This is a simple approach - for more accuracy, use pdf-lib or pdfjs-dist.
- */
-export async function getPdfPageCount(file: File): Promise<number> {
-  const buffer = await file.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  const text = new TextDecoder("latin1").decode(bytes);
-
-  // Count /Type /Page occurrences (simple heuristic)
-  const matches = text.match(/\/Type\s*\/Page[^s]/g);
-  return matches ? matches.length : 1;
-}
+// page_count is computed server-side during upload confirmation.
 
 class ResourcesApi {
   private getAuthHeader(): HeadersInit {

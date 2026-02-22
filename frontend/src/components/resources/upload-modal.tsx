@@ -16,7 +16,6 @@ import { cn } from "@/lib/utils";
 import {
   resourcesApi,
   computeFileHash,
-  getPdfPageCount,
 } from "@/lib/api/resources";
 
 const MAX_FILE_SIZE = 75 * 1024 * 1024; // 75 MB
@@ -120,11 +119,8 @@ export function UploadModal({
       setUploadState("processing");
       setUploadProgress(10);
 
-      // Step 1: Compute hash and page count FIRST
-      const [contentHash, pageCount] = await Promise.all([
-        computeFileHash(file),
-        getPdfPageCount(file),
-      ]);
+      // Step 1: Compute content hash client-side
+      const contentHash = await computeFileHash(file);
       setUploadProgress(30);
 
       // Step 2: Request upload URL (includes deduplication check)
@@ -134,7 +130,6 @@ export function UploadModal({
         file_name: file.name,  // Original filename
         size_bytes: file.size,
         content_hash: contentHash,
-        page_count: pageCount,
         is_public: isPublic,
       });
       setUploadProgress(40);
