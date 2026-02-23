@@ -14,7 +14,6 @@ Endpoints:
     GET    /resources/{id}/progress  - Get extraction progress
 """
 
-import secrets
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -134,10 +133,11 @@ async def request_upload(
         )
 
     # New content - create resource record
+    # NOTE: page_count is computed server-side after upload confirmation.
     resource = Resource(
         content_hash=request.content_hash,
         size_bytes=request.size_bytes,
-        page_count=request.page_count,
+        page_count=None,
         file_name=request.file_name,  # Store original filename
         is_public=request.is_public,
         extraction_status=ExtractionStatus.NONE,
@@ -205,8 +205,11 @@ async def confirm_upload(
             detail="Resource not in your library",
         )
 
-    # Generate thumbnail if not already done
-    if not storage.file_exists(resource.content_hash, folder="thumbnails"):
+    # Ensure authoritative page_count and thumbnail from the uploaded PDF.
+    needs_page_count = not resource.page_count
+    needs_thumbnail = not storage.file_exists(resource.content_hash, folder="thumbnails")
+
+    if needs_page_count or needs_thumbnail:
         try:
             import io
 
@@ -219,27 +222,26 @@ async def confirm_upload(
             # Open PDF with PyMuPDF
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
-            # Update page count if needed
-            if not resource.page_count:
+            if needs_page_count:
                 resource.page_count = len(doc)
                 await session.flush()
 
-            # Generate thumbnail from first page
-            first_page = doc[0]
-            pix = first_page.get_pixmap(dpi=150)
-            img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-            img.thumbnail((400, 600), Image.Resampling.LANCZOS)
+            if needs_thumbnail and len(doc) > 0:
+                first_page = doc[0]
+                pix = first_page.get_pixmap(dpi=150)
+                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img.thumbnail((400, 600), Image.Resampling.LANCZOS)
 
-            thumbnail_buffer = io.BytesIO()
-            img.save(thumbnail_buffer, format="WEBP", quality=85)
-            storage.upload_thumbnail(thumbnail_buffer.getvalue(), resource.content_hash)
+                thumbnail_buffer = io.BytesIO()
+                img.save(thumbnail_buffer, format="WEBP", quality=85)
+                storage.upload_thumbnail(thumbnail_buffer.getvalue(), resource.content_hash)
 
             doc.close()
         except Exception as e:
-            # Log but don't fail - thumbnail is optional
+            # Log but don't fail - thumbnail is optional, page_count can be recovered during extraction prep.
             import logging
 
-            logging.warning(f"Failed to generate thumbnail for {resource_id}: {e}")
+            logging.warning(f"Failed to finalize upload metadata for {resource_id}: {e}")
 
     await session.refresh(resource)
     return _build_resource_read(resource, user_resource, current_user.id)
@@ -759,7 +761,8 @@ async def trigger_extraction(
     # Enqueue prepare_extraction job (handles rendering + page job queueing)
     from app.services import RedisService
 
-    redis = RedisService(get_settings().redis_url)
+    settings = get_settings()
+    redis = RedisService(settings.redis_url)
     job_id = await redis.enqueue_job("prepare_extraction", resource_id)
     await redis.close()
 

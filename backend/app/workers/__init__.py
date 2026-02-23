@@ -7,9 +7,11 @@ Run the worker with:
 
 from .extraction_worker import (
     WorkerSettings,
+    check_orphan_resources,
+    check_stale_extractions,
     extract_page,
     prepare_extraction,
-    check_stale_extractions,
+    recover_incomplete_extractions,
 )
 
 __all__ = [
@@ -17,4 +19,6 @@ __all__ = [
     "prepare_extraction",
     "extract_page",
     "check_stale_extractions",
+    "check_orphan_resources",
+    "recover_incomplete_extractions",
 ]

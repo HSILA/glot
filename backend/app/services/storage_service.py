@@ -192,16 +192,16 @@ class StorageService:
 
         self._client.delete_object(Bucket=self._bucket_name, Key=key)
 
-    def delete_processed_folder(self, content_hash: str) -> None:
+    def delete_folder(self, prefix: str) -> None:
         """
-        Delete all processed files for a resource.
+        Delete all files under a prefix.
 
         Args:
-            content_hash: SHA-256 hash of the resource
+            prefix: Folder prefix (e.g., "processed/abc123/" or "temp/abc123/")
         """
-        prefix = f"processed/{content_hash}/"
+        if not prefix.endswith("/"):
+            prefix = prefix + "/"
 
-        # List all objects with this prefix
         paginator = self._client.get_paginator("list_objects_v2")
         for page in paginator.paginate(Bucket=self._bucket_name, Prefix=prefix):
             if "Contents" in page:
@@ -212,23 +212,43 @@ class StorageService:
                         Delete={"Objects": objects},
                     )
 
-    def file_exists(self, content_hash: str, folder: str = "raw") -> bool:
+    def delete_processed_folder(self, content_hash: str) -> None:
+        """
+        Delete all processed files for a resource.
+
+        Args:
+            content_hash: SHA-256 hash of the resource
+        """
+        self.delete_folder(f"processed/{content_hash}/")
+
+    def delete_temp_folder(self, content_hash: str) -> None:
+        """
+        Delete all temporary rendered page images for a resource.
+
+        Args:
+            content_hash: SHA-256 hash of the resource
+        """
+        self.delete_folder(f"temp/{content_hash}/")
+
+    def file_exists(self, key_or_hash: str, folder: str | None = "raw") -> bool:
         """
         Check if a file exists in R2.
 
         Args:
-            content_hash: SHA-256 hash of the file
-            folder: Source folder
+            key_or_hash: Either a full key path (if folder is None) or content hash
+            folder: Source folder or None for custom key path
 
         Returns:
             True if file exists
         """
-        if folder == "raw":
-            key = f"raw/{content_hash}.pdf"
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
         elif folder == "thumbnails":
-            key = f"thumbnails/{content_hash}.webp"
+            key = f"thumbnails/{key_or_hash}.webp"
         else:
-            key = f"{folder}/{content_hash}"
+            key = f"{folder}/{key_or_hash}"
 
         try:
             self._client.head_object(Bucket=self._bucket_name, Key=key)

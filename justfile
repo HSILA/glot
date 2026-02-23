@@ -39,6 +39,18 @@ worker:
 build:
     docker compose build
 
+# Rebuild images and recreate containers (keeps DB volumes)
+rebuild:
+    docker compose down
+    docker compose build
+    docker compose up -d
+
+# Full reset: rebuild from scratch (deletes DB/Redis volumes + local images)
+rebuild-fresh:
+    docker compose down -v --rmi local
+    docker compose build --no-cache
+    docker compose up -d
+
 # Start all services with Docker
 up:
     docker compose up -d
