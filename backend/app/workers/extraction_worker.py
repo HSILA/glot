@@ -339,12 +339,6 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
                     await session.commit()
                     return {"success": False, "error": str(render_error)}
 
-            if png_bytes is None:
-                page.last_error = "Missing page image"
-                page.status = PageStatus.PENDING
-                await session.commit()
-                return {"success": False, "error": "Missing page image"}
-
             agent = ExtractionAgent(
                 api_key=settings.openrouter_api_key,
                 model_id=settings.extraction_agent_model,
