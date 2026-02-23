@@ -58,24 +58,26 @@ async def _get_owned_card(
 
 async def get_fsrs_service_from_db(
     session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
 ) -> FSRSService:
-    """Get scheduling service configured from user + global settings."""
+    """Get scheduling service configured from current user + global settings."""
     config = get_settings()
-    result = await session.execute(select(UserSettings).limit(1))
+    result = await session.execute(
+        select(UserSettings).where(UserSettings.user_id == current_user.id)
+    )
     settings = result.scalar_one_or_none()
 
-    if settings:
-        return FSRSService(
-            desired_retention=settings.desired_retention,
-            maximum_interval_days=config.maximum_interval_days,  # Global
-            enable_fuzz=config.enable_fuzz,  # Global
-            weights=settings.weights,
-        )
+    if not settings:
+        settings = UserSettings(user_id=current_user.id)
+        session.add(settings)
+        await session.flush()
+        await session.refresh(settings)
 
-    # Return default service if no user settings exist
     return FSRSService(
-        maximum_interval_days=config.maximum_interval_days,
-        enable_fuzz=config.enable_fuzz,
+        desired_retention=settings.desired_retention,
+        maximum_interval_days=config.maximum_interval_days,  # Global
+        enable_fuzz=config.enable_fuzz,  # Global
+        weights=settings.weights,
     )
 
 
