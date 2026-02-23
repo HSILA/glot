@@ -11,32 +11,16 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
 
-from app.dependencies import get_async_session, get_current_user
-from app.models import User, UserSettings
+from app.dependencies import (
+    get_async_session,
+    get_current_user,
+    get_or_create_user_settings,
+)
+from app.models import User
 from app.schemas import SettingsRead, SettingsUpdate
 
 router = APIRouter()
-
-
-async def get_or_create_settings(
-    session: AsyncSession,
-    current_user: User,
-) -> UserSettings:
-    """Get current user's settings or create default settings row."""
-    result = await session.execute(
-        select(UserSettings).where(UserSettings.user_id == current_user.id)
-    )
-    settings = result.scalar_one_or_none()
-
-    if not settings:
-        settings = UserSettings(user_id=current_user.id)
-        session.add(settings)
-        await session.flush()
-        await session.refresh(settings)
-
-    return settings
 
 
 @router.get("", response_model=SettingsRead)
@@ -54,7 +38,7 @@ async def get_settings(
     Note: maximum_interval_days and enable_fuzz are global app settings,
     not returned here.
     """
-    return await get_or_create_settings(session, current_user)
+    return await get_or_create_user_settings(session, current_user)
 
 
 @router.put("", response_model=SettingsRead)
@@ -71,7 +55,7 @@ async def update_settings(
 
     Note: The 'weights' field can only be updated by the optimizer.
     """
-    settings = await get_or_create_settings(session, current_user)
+    settings = await get_or_create_user_settings(session, current_user)
 
     update_data = settings_data.model_dump(exclude_unset=True)
     for key, value in update_data.items():

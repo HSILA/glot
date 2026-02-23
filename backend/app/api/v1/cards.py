@@ -21,8 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core import get_settings
-from app.dependencies import get_async_session, get_current_user
-from app.models import Card, CardState, Deck, ReviewLog, User, UserSettings
+from app.dependencies import (
+    get_async_session,
+    get_current_user,
+    get_or_create_user_settings,
+)
+from app.models import Card, CardState, Deck, ReviewLog, User
 from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
@@ -62,16 +66,7 @@ async def get_fsrs_service_from_db(
 ) -> FSRSService:
     """Get scheduling service configured from current user + global settings."""
     config = get_settings()
-    result = await session.execute(
-        select(UserSettings).where(UserSettings.user_id == current_user.id)
-    )
-    settings = result.scalar_one_or_none()
-
-    if not settings:
-        settings = UserSettings(user_id=current_user.id)
-        session.add(settings)
-        await session.flush()
-        await session.refresh(settings)
+    settings = await get_or_create_user_settings(session, current_user)
 
     return FSRSService(
         desired_retention=settings.desired_retention,
