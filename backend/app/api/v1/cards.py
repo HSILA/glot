@@ -21,8 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core import get_settings
-from app.dependencies import get_async_session, get_current_user
-from app.models import Card, CardState, Deck, ReviewLog, User, UserSettings
+from app.dependencies import (
+    get_async_session,
+    get_current_user,
+    get_user_settings,
+)
+from app.models import Card, CardState, Deck, ReviewLog, User
 from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
@@ -58,24 +62,23 @@ async def _get_owned_card(
 
 async def get_fsrs_service_from_db(
     session: AsyncSession = Depends(get_async_session),
+    current_user: User = Depends(get_current_user),
 ) -> FSRSService:
-    """Get scheduling service configured from user + global settings."""
+    """Get scheduling service configured from current user + global settings.
+
+    Note:
+    - Some card endpoints also depend on get_current_user directly.
+    - FastAPI caches dependencies per-request, so user resolution is shared
+      within the same request context.
+    """
     config = get_settings()
-    result = await session.execute(select(UserSettings).limit(1))
-    settings = result.scalar_one_or_none()
+    settings = await get_user_settings(session, current_user)
 
-    if settings:
-        return FSRSService(
-            desired_retention=settings.desired_retention,
-            maximum_interval_days=config.maximum_interval_days,  # Global
-            enable_fuzz=config.enable_fuzz,  # Global
-            weights=settings.weights,
-        )
-
-    # Return default service if no user settings exist
     return FSRSService(
-        maximum_interval_days=config.maximum_interval_days,
-        enable_fuzz=config.enable_fuzz,
+        desired_retention=settings.desired_retention,
+        maximum_interval_days=config.maximum_interval_days,  # Global
+        enable_fuzz=config.enable_fuzz,  # Global
+        weights=settings.weights,
     )
 
 
