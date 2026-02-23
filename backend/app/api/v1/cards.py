@@ -24,7 +24,7 @@ from app.core import get_settings
 from app.dependencies import (
     get_async_session,
     get_current_user,
-    get_or_create_user_settings,
+    get_user_settings,
 )
 from app.models import Card, CardState, Deck, ReviewLog, User
 from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
@@ -66,7 +66,7 @@ async def get_fsrs_service_from_db(
 ) -> FSRSService:
     """Get scheduling service configured from current user + global settings."""
     config = get_settings()
-    settings = await get_or_create_user_settings(session, current_user)
+    settings = await get_user_settings(session, current_user)
 
     return FSRSService(
         desired_retention=settings.desired_retention,

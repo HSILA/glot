@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.dependencies import (
     get_async_session,
     get_current_user,
-    get_or_create_user_settings,
+    get_user_settings,
 )
 from app.models import User
 from app.schemas import SettingsRead, SettingsUpdate
@@ -38,7 +38,7 @@ async def get_settings(
     Note: maximum_interval_days and enable_fuzz are global app settings,
     not returned here.
     """
-    return await get_or_create_user_settings(session, current_user)
+    return await get_user_settings(session, current_user)
 
 
 @router.put("", response_model=SettingsRead)
@@ -55,7 +55,7 @@ async def update_settings(
 
     Note: The 'weights' field can only be updated by the optimizer.
     """
-    settings = await get_or_create_user_settings(session, current_user)
+    settings = await get_user_settings(session, current_user)
 
     update_data = settings_data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
