@@ -17,7 +17,7 @@ class CardCreate(BaseModel):
     back_content: str = Field(min_length=1, max_length=10000)
     meta_data: dict[str, Any] = Field(default_factory=dict)
     tags: list[str] = Field(default_factory=list)
-    deck_id: int | None = None
+    deck_id: int = Field(description="Deck this card belongs to")
 
 
 class CardUpdate(BaseModel):

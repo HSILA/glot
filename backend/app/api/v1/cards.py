@@ -15,22 +15,45 @@ Endpoints:
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core import get_settings
-from app.dependencies import get_async_session
-from app.models import Card, CardState, ReviewLog, UserSettings
+from app.dependencies import get_async_session, get_current_user
+from app.models import Card, CardState, Deck, ReviewLog, User, UserSettings
 from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
 
 router = APIRouter()
 
-# TODO: Refactor all endpoints to require authentication and filter by user
-# Currently using global settings; will need to get user's settings after auth is implemented
+
+async def _get_owned_deck(
+    session: AsyncSession,
+    deck_id: int,
+    user_id: int,
+) -> Deck | None:
+    """Get a deck only if it belongs to the current user."""
+    result = await session.execute(
+        select(Deck).where(Deck.id == deck_id, Deck.user_id == user_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _get_owned_card(
+    session: AsyncSession,
+    card_id: int,
+    user_id: int,
+) -> Card | None:
+    """Get a card only if it belongs to a deck owned by the current user."""
+    result = await session.execute(
+        select(Card)
+        .join(Deck, Card.deck_id == Deck.id)
+        .where(Card.id == card_id, Deck.user_id == user_id)
+    )
+    return result.scalar_one_or_none()
 
 
 async def get_fsrs_service_from_db(
@@ -59,6 +82,7 @@ async def get_fsrs_service_from_db(
 @router.get("", response_model=list[CardRead])
 async def list_cards(
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
     state: CardState | None = None,
     deck_id: int | None = None,
     tag: str | None = Query(None, description="Filter by tag"),
@@ -73,7 +97,14 @@ async def list_cards(
     - deck_id: Filter by deck
     - tag: Filter by tag (cards containing this tag)
     """
-    query = select(Card)
+    if deck_id is not None:
+        deck = await _get_owned_deck(session, deck_id, current_user.id)
+        if not deck:
+            raise HTTPException(status_code=404, detail="Deck not found")
+
+    query = select(Card).join(Deck, Card.deck_id == Deck.id).where(
+        Deck.user_id == current_user.id
+    )
 
     if state:
         query = query.where(Card.state == state)
@@ -91,6 +122,7 @@ async def list_cards(
 @router.get("/due", response_model=list[CardRead])
 async def get_due_cards(
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
     limit: int = Query(20, ge=1, le=100),
     deck_id: int | None = None,
 ):
@@ -100,10 +132,20 @@ async def get_due_cards(
     Returns cards where next_review_at <= now, plus new cards.
     Ordered by: overdue cards first (oldest), then new cards.
     """
+    if deck_id is not None:
+        deck = await _get_owned_deck(session, deck_id, current_user.id)
+        if not deck:
+            raise HTTPException(status_code=404, detail="Deck not found")
+
     now = datetime.now(UTC)
 
-    query = select(Card).where(
-        (Card.next_review_at <= now) | (Card.state == CardState.NEW)
+    query = (
+        select(Card)
+        .join(Deck, Card.deck_id == Deck.id)
+        .where(
+            Deck.user_id == current_user.id,
+            (Card.next_review_at <= now) | (Card.state == CardState.NEW),
+        )
     )
 
     if deck_id:
@@ -120,9 +162,10 @@ async def get_due_cards(
 async def get_card(
     card_id: int,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Get a single card by ID."""
-    card = await session.get(Card, card_id)
+    """Get a single card by ID if owned by current user."""
+    card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
     return card
@@ -132,6 +175,7 @@ async def get_card(
 async def create_card(
     card_data: CardCreate,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
     """
     Create a new flashcard.
@@ -139,6 +183,10 @@ async def create_card(
     The card starts in 'new' state with no scheduling.
     It will appear in /cards/due until first review.
     """
+    deck = await _get_owned_deck(session, card_data.deck_id, current_user.id)
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
+
     card = Card(**card_data.model_dump())
     session.add(card)
     await session.flush()
@@ -152,13 +200,26 @@ async def update_card(
     card_id: int,
     card_data: CardUpdate,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Update an existing card's content (not scheduling)."""
-    card = await session.get(Card, card_id)
+    card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
 
     update_data = card_data.model_dump(exclude_unset=True)
+
+    if "deck_id" in update_data:
+        if update_data["deck_id"] is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="deck_id cannot be null",
+            )
+
+        target_deck = await _get_owned_deck(session, update_data["deck_id"], current_user.id)
+        if not target_deck:
+            raise HTTPException(status_code=404, detail="Deck not found")
+
     for key, value in update_data.items():
         setattr(card, key, value)
 
@@ -172,9 +233,10 @@ async def update_card(
 async def delete_card(
     card_id: int,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Delete a card."""
-    card = await session.get(Card, card_id)
+    """Delete a card if owned by current user."""
+    card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
 
@@ -185,6 +247,7 @@ async def delete_card(
 async def preview_review(
     card_id: int,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
     fsrs: Annotated[FSRSService, Depends(get_fsrs_service_from_db)],
 ):
     """
@@ -196,7 +259,7 @@ async def preview_review(
     - Good (3): Standard increase
     - Easy (4): Large increase
     """
-    card = await session.get(Card, card_id)
+    card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
         raise HTTPException(status_code=404, detail="Card not found")
 
@@ -208,6 +271,7 @@ async def review_card(
     card_id: int,
     review: ReviewRequest,
     session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
     fsrs: Annotated[FSRSService, Depends(get_fsrs_service_from_db)],
 ):
     """
@@ -224,9 +288,9 @@ async def review_card(
     2. Update the card's FSRS scheduling (difficulty, stability, next_review_at)
     3. Return the updated card and next possible intervals
     """
-    card = await session.get(Card, card_id)
+    card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
-        logger.warning(f"Review attempted on non-existent card {card_id}")
+        logger.warning(f"Review attempted on non-existent or unauthorized card {card_id}")
         raise HTTPException(status_code=404, detail="Card not found")
 
     # Capture state BEFORE review for logging
