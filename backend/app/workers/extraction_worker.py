@@ -103,6 +103,7 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
     logger.info(f"Preparing extraction for resource {resource_id}")
 
     async with async_session_factory() as session:
+        doc: fitz.Document | None = None
         try:
             resource = await session.get(Resource, resource_id)
             if not resource:
@@ -115,7 +116,6 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
             # Ensure page_count exists (authoritative backend value)
             total_pages = resource.page_count or 0
             pdf_bytes: bytes | None = None
-            doc: fitz.Document | None = None
 
             if total_pages <= 0:
                 try:
@@ -193,9 +193,6 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
                         content_type="image/png",
                     )
 
-            if doc is not None:
-                doc.close()
-
             # Queue all non-completed pages
             incomplete_result = await session.execute(
                 select(PageExtraction).where(
@@ -249,6 +246,11 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
             logger.exception(f"Prepare extraction failed for resource {resource_id}: {e}")
             return {"success": False, "error": str(e)}
         finally:
+            if doc is not None:
+                try:
+                    doc.close()
+                except Exception as e:
+                    logger.warning(f"Failed to close PDF document for resource {resource_id}: {e}")
             await redis.close()
 
 
