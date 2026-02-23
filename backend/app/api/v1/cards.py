@@ -64,7 +64,13 @@ async def get_fsrs_service_from_db(
     session: AsyncSession = Depends(get_async_session),
     current_user: User = Depends(get_current_user),
 ) -> FSRSService:
-    """Get scheduling service configured from current user + global settings."""
+    """Get scheduling service configured from current user + global settings.
+
+    Note:
+    - Some card endpoints also depend on get_current_user directly.
+    - FastAPI caches dependencies per-request, so user resolution is shared
+      within the same request context.
+    """
     config = get_settings()
     settings = await get_user_settings(session, current_user)
 
