@@ -60,17 +60,12 @@ export async function computeFileHash(file: File): Promise<string> {
 // page_count is computed server-side during upload confirmation.
 
 class ResourcesApi {
-  private getAuthHeader(): HeadersInit {
-    const token = localStorage.getItem("access_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
   async requestUpload(request: UploadRequest): Promise<UploadResponse> {
     const res = await fetch(`${API_BASE}/upload`, {
       method: "POST",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...this.getAuthHeader(),
       },
       body: JSON.stringify(request),
     });
@@ -86,7 +81,7 @@ class ResourcesApi {
       `${API_BASE}/upload/confirm?resource_id=${resourceId}`,
       {
         method: "POST",
-        headers: this.getAuthHeader(),
+        credentials: "include",
       }
     );
     if (!res.ok) {
@@ -116,7 +111,7 @@ class ResourcesApi {
     const res = await fetch(
       `${API_BASE}?limit=${limit}&offset=${offset}`,
       {
-        headers: this.getAuthHeader(),
+        credentials: "include",
       }
     );
     if (!res.ok) {
@@ -138,7 +133,7 @@ class ResourcesApi {
       params.set("search", search);
     }
     const res = await fetch(`${API_BASE}/public?${params}`, {
-      headers: this.getAuthHeader(),
+      credentials: "include",
     });
     if (!res.ok) {
       throw new Error("Failed to fetch public resources");
@@ -148,7 +143,7 @@ class ResourcesApi {
 
   async getResource(id: number): Promise<Resource> {
     const res = await fetch(`${API_BASE}/${id}`, {
-      headers: this.getAuthHeader(),
+      credentials: "include",
     });
     if (!res.ok) {
       throw new Error("Failed to fetch resource");
@@ -159,9 +154,9 @@ class ResourcesApi {
   async addPublicResource(id: number, name: string): Promise<Resource> {
     const res = await fetch(`${API_BASE}/${id}/add`, {
       method: "POST",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...this.getAuthHeader(),
       },
       body: JSON.stringify({ name }),
     });
@@ -178,9 +173,9 @@ class ResourcesApi {
   ): Promise<Resource> {
     const res = await fetch(`${API_BASE}/${id}`, {
       method: "PATCH",
+      credentials: "include",
       headers: {
         "Content-Type": "application/json",
-        ...this.getAuthHeader(),
       },
       body: JSON.stringify(updates),
     });
@@ -194,7 +189,7 @@ class ResourcesApi {
   async deleteResource(id: number): Promise<void> {
     const res = await fetch(`${API_BASE}/${id}`, {
       method: "DELETE",
-      headers: this.getAuthHeader(),
+      credentials: "include",
     });
     if (!res.ok) {
       const error = await res.json();
@@ -205,7 +200,7 @@ class ResourcesApi {
   async triggerExtraction(id: number): Promise<void> {
     const res = await fetch(`${API_BASE}/${id}/extract`, {
       method: "POST",
-      headers: this.getAuthHeader(),
+      credentials: "include",
     });
     if (!res.ok) {
       const error = await res.json();
@@ -215,7 +210,7 @@ class ResourcesApi {
 
   async getExtractionProgress(id: number): Promise<ExtractionProgress> {
     const res = await fetch(`${API_BASE}/${id}/progress`, {
-      headers: this.getAuthHeader(),
+      credentials: "include",
     });
     if (!res.ok) {
       throw new Error("Failed to fetch extraction progress");
@@ -225,7 +220,7 @@ class ResourcesApi {
 
   async getDownloadUrl(id: number): Promise<string> {
     const res = await fetch(`${API_BASE}/${id}/download`, {
-      headers: this.getAuthHeader(),
+      credentials: "include",
     });
     if (!res.ok) {
       throw new Error("Failed to get download URL");

@@ -29,6 +29,34 @@ export interface UpdateDeckRequest {
 
 const API_BASE = "/api/v1/decks";
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function assertDeck(value: unknown, context = "Deck"): asserts value is Deck {
+  if (!isObject(value)) throw new Error(`${context}: expected object`);
+  if (typeof value.id !== "number") throw new Error(`${context}: invalid id`);
+  if (typeof value.name !== "string") throw new Error(`${context}: invalid name`);
+  if (!(value.description === null || typeof value.description === "string")) {
+    throw new Error(`${context}: invalid description`);
+  }
+  if (!(value.parent_id === null || typeof value.parent_id === "number")) {
+    throw new Error(`${context}: invalid parent_id`);
+  }
+  if (typeof value.created_at !== "string") throw new Error(`${context}: invalid created_at`);
+  if (typeof value.updated_at !== "string") throw new Error(`${context}: invalid updated_at`);
+}
+
+function parseDeck(value: unknown, context = "Deck"): Deck {
+  assertDeck(value, context);
+  return value;
+}
+
+function parseDeckArray(value: unknown, context = "Decks"): Deck[] {
+  if (!Array.isArray(value)) throw new Error(`${context}: expected array`);
+  return value.map((item, index) => parseDeck(item, `${context}[${index}]`));
+}
+
 class DecksApi {
   private async parseError(response: Response, fallback: string): Promise<never> {
     const data = await response.json().catch(() => null);
@@ -57,7 +85,8 @@ class DecksApi {
       await this.parseError(response, "Failed to fetch decks");
     }
 
-    return response.json();
+    const data = await response.json();
+    return parseDeckArray(data, "List decks response");
   }
 
   async getDeck(deckId: number): Promise<Deck> {
@@ -69,7 +98,8 @@ class DecksApi {
       await this.parseError(response, "Failed to fetch deck");
     }
 
-    return response.json();
+    const data = await response.json();
+    return parseDeck(data, "Get deck response");
   }
 
   async createDeck(payload: CreateDeckRequest): Promise<Deck> {
@@ -86,7 +116,8 @@ class DecksApi {
       await this.parseError(response, "Failed to create deck");
     }
 
-    return response.json();
+    const data = await response.json();
+    return parseDeck(data, "Create deck response");
   }
 
   async updateDeck(deckId: number, payload: UpdateDeckRequest): Promise<Deck> {
@@ -103,7 +134,8 @@ class DecksApi {
       await this.parseError(response, "Failed to update deck");
     }
 
-    return response.json();
+    const data = await response.json();
+    return parseDeck(data, "Update deck response");
   }
 
   async deleteDeck(deckId: number): Promise<void> {
