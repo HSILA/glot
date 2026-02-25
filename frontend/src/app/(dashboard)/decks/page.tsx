@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Plus,
   Layers,
@@ -8,6 +9,7 @@ import {
   MoreHorizontal,
   Play,
   BookOpen,
+  Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,68 +21,132 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { decksApi, type Deck } from "@/lib/api/decks";
+import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
 
-// Mock data
-const decks = [
-  {
-    id: 1,
-    name: "Japanese N5",
-    description: "JLPT N5 vocabulary and grammar",
-    color: "#ef4444",
-    totalCards: 250,
-    newCards: 15,
-    dueCards: 23,
-    masteredCards: 180,
-    lastStudied: "Today",
-  },
-  {
-    id: 2,
-    name: "Medical Terms",
-    description: "Anatomy and medical vocabulary",
-    color: "#3b82f6",
-    totalCards: 500,
-    newCards: 45,
-    dueCards: 12,
-    masteredCards: 320,
-    lastStudied: "Yesterday",
-  },
-  {
-    id: 3,
-    name: "Philosophy",
-    description: "Key concepts and thinkers",
-    color: "#8b5cf6",
-    totalCards: 180,
-    newCards: 8,
-    dueCards: 28,
-    masteredCards: 95,
-    lastStudied: "2 days ago",
-  },
-  {
-    id: 4,
-    name: "Spanish B2",
-    description: "Intermediate Spanish vocabulary",
-    color: "#f59e0b",
-    totalCards: 800,
-    newCards: 100,
-    dueCards: 5,
-    masteredCards: 650,
-    lastStudied: "Today",
-  },
-  {
-    id: 5,
-    name: "Data Structures",
-    description: "Algorithms and complexity",
-    color: "#10b981",
-    totalCards: 120,
-    newCards: 20,
-    dueCards: 18,
-    masteredCards: 65,
-    lastStudied: "3 days ago",
-  },
+const DECK_COLORS = [
+  "#ef4444",
+  "#3b82f6",
+  "#8b5cf6",
+  "#f59e0b",
+  "#10b981",
+  "#ec4899",
+  "#14b8a6",
+  "#6366f1",
 ];
 
+type DeckWithStats = Deck & {
+  color: string;
+  totalCards: number;
+  newCards: number;
+  dueCards: number;
+  masteredCards: number;
+  lastStudied: string;
+};
+
+function colorForDeck(deckId: number): string {
+  return DECK_COLORS[(deckId - 1) % DECK_COLORS.length];
+}
+
+function formatLastStudied(lastReviewedAt: string | null): string {
+  if (!lastReviewedAt) return "Never";
+
+  const ts = new Date(lastReviewedAt).getTime();
+  if (Number.isNaN(ts)) return "Unknown";
+
+  const days = Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
+
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  return `${days} days ago`;
+}
+
+function computeDeckStats(cards: FlashCard[]) {
+  const now = Date.now();
+  let lastReviewAt: string | null = null;
+
+  const dueCards = cards.filter((card) => {
+    if (card.state === "new") return true;
+    if (!card.next_review_at) return false;
+    const nextTs = new Date(card.next_review_at).getTime();
+    return !Number.isNaN(nextTs) && nextTs <= now;
+  }).length;
+
+  for (const card of cards) {
+    if (!card.last_review_at) continue;
+    if (!lastReviewAt || new Date(card.last_review_at) > new Date(lastReviewAt)) {
+      lastReviewAt = card.last_review_at;
+    }
+  }
+
+  return {
+    totalCards: cards.length,
+    newCards: cards.filter((card) => card.state === "new").length,
+    dueCards,
+    masteredCards: cards.filter((card) => card.state === "review").length,
+    lastStudied: formatLastStudied(lastReviewAt),
+  };
+}
+
 export default function DecksPage() {
-  const totalDue = decks.reduce((sum, deck) => sum + deck.dueCards, 0);
+  const router = useRouter();
+  const [decks, setDecks] = useState<DeckWithStats[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchDecks = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError(null);
+
+      const userDecks = await decksApi.listDecks();
+
+      const decksWithStats = await Promise.all(
+        userDecks.map(async (deck) => {
+          const cards = await cardsApi.listCards({ deck_id: deck.id, limit: 1000 });
+          return {
+            ...deck,
+            color: colorForDeck(deck.id),
+            ...computeDeckStats(cards),
+          };
+        })
+      );
+
+      setDecks(decksWithStats);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load decks");
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDecks();
+  }, [fetchDecks]);
+
+  const totalDue = useMemo(
+    () => decks.reduce((sum, deck) => sum + deck.dueCards, 0),
+    [decks]
+  );
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-20">
+        <p className="text-muted-foreground">{error}</p>
+        <Button variant="outline" className="mt-4" onClick={fetchDecks}>
+          Try Again
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -95,7 +161,7 @@ export default function DecksPage() {
             {decks.length} decks &middot; {totalDue} cards due today
           </p>
         </div>
-        <Button className="gap-2 w-full md:w-auto">
+        <Button className="gap-2 w-full md:w-auto" disabled>
           <Plus className="h-4 w-4" />
           New Deck
         </Button>
@@ -116,7 +182,10 @@ export default function DecksPage() {
                 </p>
               </div>
             </div>
-            <Button className="w-full sm:w-auto gap-2">
+            <Button
+              className="w-full sm:w-auto gap-2"
+              onClick={() => router.push("/session")}
+            >
               <Play className="h-4 w-4" />
               Study All Due
             </Button>
@@ -124,115 +193,119 @@ export default function DecksPage() {
         </Card>
       )}
 
-      {/* Decks Grid */}
-      <div className="grid gap-4 md:grid-cols-2">
-        {decks.map((deck) => {
-          const masteryPercent = Math.round(
-            (deck.masteredCards / deck.totalCards) * 100
-          );
-          return (
-            <Card
-              key={deck.id}
-              className="group cursor-pointer hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5"
-            >
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-10 h-10 rounded-lg flex items-center justify-center"
-                      style={{ backgroundColor: `${deck.color}20` }}
-                    >
-                      <BookOpen
-                        className="h-5 w-5"
-                        style={{ color: deck.color }}
-                      />
-                    </div>
-                    <div>
-                      <CardTitle className="text-lg group-hover:text-primary transition-colors">
-                        {deck.name}
-                      </CardTitle>
-                      <p className="text-sm text-muted-foreground">
-                        {deck.description}
-                      </p>
-                    </div>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+      {/* Empty state */}
+      {decks.length === 0 ? (
+        <Card>
+          <CardContent className="py-16 text-center">
+            <BookOpen className="h-10 w-10 mx-auto text-muted-foreground/50 mb-3" />
+            <p className="text-muted-foreground">No decks yet.</p>
+          </CardContent>
+        </Card>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2">
+          {decks.map((deck) => {
+            const masteryPercent =
+              deck.totalCards > 0
+                ? Math.round((deck.masteredCards / deck.totalCards) * 100)
+                : 0;
+
+            return (
+              <Card
+                key={deck.id}
+                className="group cursor-pointer hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5"
+              >
+                <CardHeader className="pb-3">
+                  <div className="flex items-start justify-between">
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center"
+                        style={{ backgroundColor: `${deck.color}20` }}
                       >
-                        <MoreHorizontal className="h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem>Edit</DropdownMenuItem>
-                      <DropdownMenuItem>Export</DropdownMenuItem>
-                      <DropdownMenuItem className="text-destructive">
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
-              </CardHeader>
-
-              <CardContent className="pt-0">
-                {/* Stats */}
-                <div className="flex items-center gap-2 mb-3">
-                  <Badge
-                    variant="secondary"
-                    className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
-                  >
-                    {deck.newCards} new
-                  </Badge>
-                  <Badge
-                    variant="secondary"
-                    className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
-                  >
-                    {deck.dueCards} due
-                  </Badge>
-                  <span className="text-xs text-muted-foreground ml-auto">
-                    {deck.totalCards} total
-                  </span>
-                </div>
-
-                {/* Mastery Progress */}
-                <div className="space-y-1.5">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="text-muted-foreground">Mastery</span>
-                    <span className="font-medium">{masteryPercent}%</span>
+                        <BookOpen
+                          className="h-5 w-5"
+                          style={{ color: deck.color }}
+                        />
+                      </div>
+                      <div>
+                        <CardTitle className="text-lg group-hover:text-primary transition-colors">
+                          {deck.name}
+                        </CardTitle>
+                        <p className="text-sm text-muted-foreground">
+                          {deck.description || "No description"}
+                        </p>
+                      </div>
+                    </div>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                        >
+                          <MoreHorizontal className="h-4 w-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem disabled>Edit</DropdownMenuItem>
+                        <DropdownMenuItem disabled>Export</DropdownMenuItem>
+                        <DropdownMenuItem className="text-destructive" disabled>
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   </div>
-                  <Progress
-                    value={masteryPercent}
-                    className="h-2"
-                    style={
-                      {
-                        "--tw-progress-color": deck.color,
-                      } as React.CSSProperties
-                    }
-                  />
-                </div>
+                </CardHeader>
 
-                {/* Footer */}
-                <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
-                  <span className="text-xs text-muted-foreground">
-                    Last studied: {deck.lastStudied}
-                  </span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 gap-1 text-primary"
-                  >
-                    Study
-                    <ChevronRight className="h-3 w-3" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-          );
-        })}
-      </div>
+                <CardContent className="pt-0">
+                  {/* Stats */}
+                  <div className="flex items-center gap-2 mb-3">
+                    <Badge
+                      variant="secondary"
+                      className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
+                    >
+                      {deck.newCards} new
+                    </Badge>
+                    <Badge
+                      variant="secondary"
+                      className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
+                    >
+                      {deck.dueCards} due
+                    </Badge>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {deck.totalCards} total
+                    </span>
+                  </div>
+
+                  {/* Mastery Progress */}
+                  <div className="space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-muted-foreground">Mastery</span>
+                      <span className="font-medium">{masteryPercent}%</span>
+                    </div>
+                    <Progress value={masteryPercent} className="h-2" />
+                  </div>
+
+                  {/* Footer */}
+                  <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
+                    <span className="text-xs text-muted-foreground">
+                      Last studied: {deck.lastStudied}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 gap-1 text-primary"
+                      onClick={() => router.push(`/session?deck_id=${deck.id}`)}
+                    >
+                      Study
+                      <ChevronRight className="h-3 w-3" />
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
