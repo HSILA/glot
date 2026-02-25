@@ -27,30 +27,35 @@ jobs:
           BODY: ${{ github.event.comment.body }}
         run: |
           python3 - <<'PY'
-          import json, os
-          msg = f"""You were mentioned on GitHub.
+          import json
+          import os
 
-Repo: {os.getenv('REPO')}
-URL: {os.getenv('URL')}
-Author: @{os.getenv('AUTHOR')}
+          lines = [
+              "You were mentioned on GitHub.",
+              "",
+              f"Repo: {os.getenv('REPO')}",
+              f"URL: {os.getenv('URL')}",
+              f"Author: @{os.getenv('AUTHOR')}",
+              "",
+              "Comment:",
+              os.getenv('BODY') or "",
+              "",
+              "Task:",
+              "- Answer the user.",
+              "- Reply in the same GitHub thread using gh CLI.",
+              "- Keep it concise and practical.",
+          ]
 
-Comment:
-{os.getenv('BODY')}
-
-Task:
-- Answer the user.
-- Reply in the same GitHub thread using gh CLI.
-- Keep it concise and practical.
-"""
           payload = {
-            "name": "GitHub",
-            "agentId": "main",
-            "wakeMode": "now",
-            "deliver": False,
-            "message": msg,
+              "name": "GitHub",
+              "agentId": "main",
+              "wakeMode": "now",
+              "deliver": False,
+              "message": "\n".join(lines),
           }
-          with open("payload.json", "w") as f:
-            json.dump(payload, f)
+
+          with open("payload.json", "w", encoding="utf-8") as f:
+              json.dump(payload, f)
           PY
 
       - name: Relay request
