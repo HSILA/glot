@@ -8,10 +8,6 @@ on:
 
 permissions: {}
 
-concurrency:
-  group: agent-mention-relay
-  cancel-in-progress: true
-
 jobs:
   relay:
     runs-on: [self-hosted]
@@ -62,7 +58,7 @@ Task:
           AGENT_RELAY_URL: ${{ secrets.AGENT_RELAY_URL }}
           AGENT_RELAY_TOKEN: ${{ secrets.AGENT_RELAY_TOKEN }}
         run: |
-          curl -sS -X POST "$AGENT_RELAY_URL" \
+          curl --fail-with-body -sS -X POST "$AGENT_RELAY_URL" \
             -H "Authorization: Bearer $AGENT_RELAY_TOKEN" \
             -H "Content-Type: application/json" \
             --data @payload.json
