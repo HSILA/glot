@@ -1,0 +1,68 @@
+name: Agent Mention Relay
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+
+permissions: {}
+
+concurrency:
+  group: agent-mention-relay
+  cancel-in-progress: true
+
+jobs:
+  relay:
+    runs-on: [self-hosted]
+    timeout-minutes: 2
+    if: >
+      contains(github.event.comment.body, '@hsilabot') &&
+      contains(fromJSON('["HSILA","hsilabot"]'), github.event.comment.user.login) &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+      github.event.comment.user.login != 'github-actions[bot]'
+
+    steps:
+      - name: Build payload
+        env:
+          REPO: ${{ github.repository }}
+          URL: ${{ github.event.comment.html_url }}
+          AUTHOR: ${{ github.event.comment.user.login }}
+          BODY: ${{ github.event.comment.body }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          msg = f"""You were mentioned on GitHub.
+
+Repo: {os.getenv('REPO')}
+URL: {os.getenv('URL')}
+Author: @{os.getenv('AUTHOR')}
+
+Comment:
+{os.getenv('BODY')}
+
+Task:
+- Answer the user.
+- Reply in the same GitHub thread using gh CLI.
+- Keep it concise and practical.
+"""
+          payload = {
+            "name": "GitHub",
+            "agentId": "main",
+            "wakeMode": "now",
+            "deliver": False,
+            "message": msg,
+          }
+          with open("payload.json", "w") as f:
+            json.dump(payload, f)
+          PY
+
+      - name: Relay request
+        env:
+          AGENT_RELAY_URL: ${{ secrets.AGENT_RELAY_URL }}
+          AGENT_RELAY_TOKEN: ${{ secrets.AGENT_RELAY_TOKEN }}
+        run: |
+          curl -sS -X POST "$AGENT_RELAY_URL" \
+            -H "Authorization: Bearer $AGENT_RELAY_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @payload.json
