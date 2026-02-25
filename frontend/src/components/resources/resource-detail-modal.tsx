@@ -66,9 +66,7 @@ export function ResourceDetailModal({
   useEffect(() => {
     if (open) {
       fetch(`/api/v1/resources/${resource.id}/thumbnail`, {
-        headers: {
-          Authorization: `Bearer ${localStorage.getItem("access_token")}`,
-        },
+        credentials: "include",
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => setThumbnailUrl(data?.url || null))

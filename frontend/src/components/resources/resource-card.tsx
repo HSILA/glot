@@ -74,7 +74,7 @@ export function ResourceCard({
     // Only fetch for grid view to save bandwidth
     if (viewMode === "grid") {
       fetch(`/api/v1/resources/${resource.id}/thumbnail`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem("access_token")}` },
+        credentials: "include",
       })
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
