@@ -137,7 +137,7 @@ function parseNextStatesResponse(value: unknown): NextStatesResponse {
   assertSchedulingInfo(value.hard, "Next states.hard");
   assertSchedulingInfo(value.good, "Next states.good");
   assertSchedulingInfo(value.easy, "Next states.easy");
-  return value as NextStatesResponse;
+  return value as unknown as NextStatesResponse;
 }
 
 function parseReviewResponse(value: unknown): ReviewResponse {
