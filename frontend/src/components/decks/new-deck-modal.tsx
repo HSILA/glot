@@ -66,9 +66,14 @@ export function NewDeckModal({ open, onOpenChange, onCreated }: NewDeckModalProp
   };
 
   const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && isSubmitting) {
+      return;
+    }
+
     if (!nextOpen) {
       resetForm();
     }
+
     onOpenChange(nextOpen);
   };
 
@@ -128,7 +133,8 @@ export function NewDeckModal({ open, onOpenChange, onCreated }: NewDeckModalProp
 
       onCreated(deck, { color, tags });
       toast.success("Deck created");
-      handleOpenChange(false);
+      resetForm();
+      onOpenChange(false);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Failed to create deck");
     } finally {

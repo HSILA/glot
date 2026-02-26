@@ -57,6 +57,18 @@ function formatLastStudied(lastReviewedAt: string | null): string {
   return `${days} days ago`;
 }
 
+function isDeckPresentationMetadata(value: unknown): value is DeckPresentationMetadata {
+  if (!value || typeof value !== "object") return false;
+
+  const maybe = value as { color?: unknown; tags?: unknown };
+
+  return (
+    typeof maybe.color === "string" &&
+    Array.isArray(maybe.tags) &&
+    maybe.tags.every((tag) => typeof tag === "string")
+  );
+}
+
 function readDeckMetadataMap(): Record<string, DeckPresentationMetadata> {
   if (typeof window === "undefined") return {};
 
@@ -64,10 +76,18 @@ function readDeckMetadataMap(): Record<string, DeckPresentationMetadata> {
     const raw = window.localStorage.getItem(DECK_PREFS_STORAGE_KEY);
     if (!raw) return {};
 
-    const parsed = JSON.parse(raw);
+    const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
 
-    return parsed as Record<string, DeckPresentationMetadata>;
+    const entries = Object.entries(parsed as Record<string, unknown>);
+    const safe: Record<string, DeckPresentationMetadata> = {};
+
+    for (const [deckId, metadata] of entries) {
+      if (!isDeckPresentationMetadata(metadata)) continue;
+      safe[deckId] = metadata;
+    }
+
+    return safe;
   } catch {
     return {};
   }
