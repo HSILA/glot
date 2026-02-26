@@ -44,7 +44,7 @@ async def init_db() -> None:
                 text("ALTER TABLE decks ADD COLUMN IF NOT EXISTS color VARCHAR(7)")
             )
             await conn.execute(
-                text("ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags JSON")
+                text("ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags JSONB")
             )
             await conn.execute(text("ALTER TABLE decks DROP COLUMN IF EXISTS parent_id"))
 

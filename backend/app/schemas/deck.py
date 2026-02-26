@@ -7,6 +7,28 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 
+def validate_hex_color(v: str | None) -> str | None:
+    """Validate hex color format (#RRGGBB)."""
+    if v is None:
+        return v
+    if not v.startswith('#') or len(v) != 7:
+        raise ValueError('Color must be a 7-character hex code starting with #')
+    hex_part = v[1:]
+    if not all(c in '0123456789abcdefABCDEF' for c in hex_part):
+        raise ValueError('Color must contain only valid hex digits (0-9, a-f, A-F)')
+    return v
+
+
+def validate_tags(v: list[str] | None) -> list[str] | None:
+    """Validate tags list (max 5 tags, each max 20 chars)."""
+    if v is None:
+        return v
+    for tag in v:
+        if len(tag) > 20:
+            raise ValueError('Each tag must be 20 characters or less')
+    return v
+
+
 class DeckCreate(BaseModel):
     """Schema for creating a new deck."""
 
@@ -15,28 +37,8 @@ class DeckCreate(BaseModel):
     color: str | None = Field(default=None, max_length=7, description="Hex color code (e.g., '#ef4444')")
     tags: list[str] | None = Field(default=None, max_length=5, description="List of tags (max 5)")
 
-    @field_validator('color')
-    @classmethod
-    def validate_color(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        if not v.startswith('#') or len(v) != 7:
-            raise ValueError('Color must be a 7-character hex code starting with #')
-        # Validate hex digits
-        hex_part = v[1:]
-        if not all(c in '0123456789abcdefABCDEF' for c in hex_part):
-            raise ValueError('Color must contain only valid hex digits (0-9, a-f, A-F)')
-        return v
-
-    @field_validator('tags')
-    @classmethod
-    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
-        if v is None:
-            return v
-        for tag in v:
-            if len(tag) > 20:
-                raise ValueError('Each tag must be 20 characters or less')
-        return v
+    _validate_color = field_validator('color')(validate_hex_color)
+    _validate_tags = field_validator('tags')(validate_tags)
 
 
 class DeckUpdate(BaseModel):
@@ -47,28 +49,8 @@ class DeckUpdate(BaseModel):
     color: str | None = Field(default=None, max_length=7, description="Hex color code (e.g., '#ef4444')")
     tags: list[str] | None = Field(default=None, max_length=5, description="List of tags (max 5)")
 
-    @field_validator('color')
-    @classmethod
-    def validate_color(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        if not v.startswith('#') or len(v) != 7:
-            raise ValueError('Color must be a 7-character hex code starting with #')
-        # Validate hex digits
-        hex_part = v[1:]
-        if not all(c in '0123456789abcdefABCDEF' for c in hex_part):
-            raise ValueError('Color must contain only valid hex digits (0-9, a-f, A-F)')
-        return v
-
-    @field_validator('tags')
-    @classmethod
-    def validate_tags(cls, v: list[str] | None) -> list[str] | None:
-        if v is None:
-            return v
-        for tag in v:
-            if len(tag) > 20:
-                raise ValueError('Each tag must be 20 characters or less')
-        return v
+    _validate_color = field_validator('color')(validate_hex_color)
+    _validate_tags = field_validator('tags')(validate_tags)
 
 
 class DeckRead(BaseModel):

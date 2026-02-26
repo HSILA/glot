@@ -7,7 +7,8 @@ Flat deck structure (no hierarchy).
 
 from datetime import datetime
 
-from sqlalchemy import JSON, Column, Index, text
+from sqlalchemy import Column, Index, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
@@ -56,7 +57,7 @@ class Deck(SQLModel, table=True):
     )
     tags: list[str] | None = Field(
         default=None,
-        sa_column=Column(JSON, nullable=True),
+        sa_column=Column(JSONB, nullable=True),
         description="List of tags for deck organization",
     )
 
