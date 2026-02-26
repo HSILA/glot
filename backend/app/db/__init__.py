@@ -3,6 +3,7 @@ Database connection and session management.
 """
 
 from loguru import logger
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
@@ -35,6 +36,18 @@ async def init_db() -> None:
     try:
         async with async_engine.begin() as conn:
             await conn.run_sync(SQLModel.metadata.create_all)
+
+            # NOTE: This project does not yet use a migration tool (e.g., Alembic).
+            # These schema adjustments keep local dev/prod in sync with model changes.
+            # Safe-guards: IF NOT EXISTS / IF EXISTS.
+            await conn.execute(
+                text("ALTER TABLE decks ADD COLUMN IF NOT EXISTS color VARCHAR(7)")
+            )
+            await conn.execute(
+                text("ALTER TABLE decks ADD COLUMN IF NOT EXISTS tags JSONB")
+            )
+            await conn.execute(text("ALTER TABLE decks DROP COLUMN IF EXISTS parent_id"))
+
         logger.info("Database tables created/verified")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")
