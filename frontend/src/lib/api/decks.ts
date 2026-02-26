@@ -4,13 +4,13 @@ export interface Deck {
   id: number;
   name: string;
   description: string | null;
-  parent_id: number | null;
+  color: string | null;
+  tags: string[] | null;
   created_at: string;
   updated_at: string;
 }
 
 export interface ListDecksOptions {
-  parent_id?: number;
   limit?: number;
   offset?: number;
 }
@@ -18,13 +18,15 @@ export interface ListDecksOptions {
 export interface CreateDeckRequest {
   name: string;
   description?: string | null;
-  parent_id?: number | null;
+  color?: string | null;
+  tags?: string[] | null;
 }
 
 export interface UpdateDeckRequest {
   name?: string;
   description?: string | null;
-  parent_id?: number | null;
+  color?: string | null;
+  tags?: string[] | null;
 }
 
 const API_BASE = "/api/v1/decks";
@@ -40,8 +42,11 @@ function assertDeck(value: unknown, context = "Deck"): asserts value is Deck {
   if (!(value.description === null || typeof value.description === "string")) {
     throw new Error(`${context}: invalid description`);
   }
-  if (!(value.parent_id === null || typeof value.parent_id === "number")) {
-    throw new Error(`${context}: invalid parent_id`);
+  if (!(value.color === null || typeof value.color === "string")) {
+    throw new Error(`${context}: invalid color`);
+  }
+  if (!(value.tags === null || (Array.isArray(value.tags) && value.tags.every(t => typeof t === "string")))) {
+    throw new Error(`${context}: invalid tags`);
   }
   if (typeof value.created_at !== "string") throw new Error(`${context}: invalid created_at`);
   if (typeof value.updated_at !== "string") throw new Error(`${context}: invalid updated_at`);
@@ -70,9 +75,6 @@ class DecksApi {
   async listDecks(options: ListDecksOptions = {}): Promise<Deck[]> {
     const params = new URLSearchParams();
 
-    if (options.parent_id !== undefined) {
-      params.set("parent_id", String(options.parent_id));
-    }
     params.set("limit", String(options.limit ?? 100));
     params.set("offset", String(options.offset ?? 0));
 

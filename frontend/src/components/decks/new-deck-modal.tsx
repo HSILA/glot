@@ -34,15 +34,10 @@ const DESCRIPTION_MAX = 140;
 const MAX_TAGS = 5;
 const TAG_MAX = 20;
 
-export type NewDeckMetadata = {
-  color: string;
-  tags: string[];
-};
-
 interface NewDeckModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  onCreated: (deck: Deck, metadata: NewDeckMetadata) => void;
+  onCreated: (deck: Deck) => void;
 }
 
 export function NewDeckModal({ open, onOpenChange, onCreated }: NewDeckModalProps) {
@@ -129,9 +124,11 @@ export function NewDeckModal({ open, onOpenChange, onCreated }: NewDeckModalProp
       const deck = await decksApi.createDeck({
         name: finalName,
         description: finalDescription || null,
+        color: color,
+        tags: tags.length > 0 ? tags : null,
       });
 
-      onCreated(deck, { color, tags });
+      onCreated(deck);
       toast.success("Deck created");
       resetForm();
       onOpenChange(false);

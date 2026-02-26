@@ -25,19 +25,9 @@ import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
 import {
   DECK_COLOR_OPTIONS,
   NewDeckModal,
-  type NewDeckMetadata,
 } from "@/components/decks/new-deck-modal";
 
-const DECK_PREFS_STORAGE_KEY = "glot.deck-metadata.v1";
-
-type DeckPresentationMetadata = {
-  color: string;
-  tags: string[];
-};
-
 type DeckWithStats = Deck & {
-  color: string;
-  tags: string[];
   totalCards: number;
   newCards: number;
   dueCards: number;
@@ -57,64 +47,9 @@ function formatLastStudied(lastReviewedAt: string | null): string {
   return `${days} days ago`;
 }
 
-function isDeckPresentationMetadata(value: unknown): value is DeckPresentationMetadata {
-  if (!value || typeof value !== "object") return false;
-
-  const maybe = value as { color?: unknown; tags?: unknown };
-
-  return (
-    typeof maybe.color === "string" &&
-    Array.isArray(maybe.tags) &&
-    maybe.tags.every((tag) => typeof tag === "string")
-  );
-}
-
-function readDeckMetadataMap(): Record<string, DeckPresentationMetadata> {
-  if (typeof window === "undefined") return {};
-
-  try {
-    const raw = window.localStorage.getItem(DECK_PREFS_STORAGE_KEY);
-    if (!raw) return {};
-
-    const parsed: unknown = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-
-    const entries = Object.entries(parsed as Record<string, unknown>);
-    const safe: Record<string, DeckPresentationMetadata> = {};
-
-    for (const [deckId, metadata] of entries) {
-      if (!isDeckPresentationMetadata(metadata)) continue;
-      safe[deckId] = metadata;
-    }
-
-    return safe;
-  } catch {
-    return {};
-  }
-}
-
-function writeDeckMetadataMap(value: Record<string, DeckPresentationMetadata>) {
-  if (typeof window === "undefined") return;
-
-  try {
-    window.localStorage.setItem(DECK_PREFS_STORAGE_KEY, JSON.stringify(value));
-  } catch {
-    // Non-fatal: local presentation metadata should not block deck creation.
-  }
-}
-
-function upsertDeckMetadata(deckId: number, metadata: NewDeckMetadata) {
-  const current = readDeckMetadataMap();
-  current[String(deckId)] = {
-    color: metadata.color,
-    tags: metadata.tags,
-  };
-  writeDeckMetadataMap(current);
-}
-
-function colorForDeck(deckId: number, localColor?: string): string {
-  if (localColor) return localColor;
-  return DECK_COLOR_OPTIONS[(deckId - 1) % DECK_COLOR_OPTIONS.length];
+function colorForDeck(deck: Deck): string {
+  if (deck.color) return deck.color;
+  return DECK_COLOR_OPTIONS[(deck.id - 1) % DECK_COLOR_OPTIONS.length];
 }
 
 function computeDeckStats(cards: FlashCard[]) {
@@ -208,16 +143,12 @@ export default function DecksPage() {
         cardsByDeck.set(card.deck_id, arr);
       }
 
-      const metadata = readDeckMetadataMap();
-
       const decksWithStats = userDecks.map((deck) => {
-        const metadataForDeck = metadata[String(deck.id)];
         const cards = cardsByDeck.get(deck.id) ?? [];
 
         return {
           ...deck,
-          color: colorForDeck(deck.id, metadataForDeck?.color),
-          tags: metadataForDeck?.tags ?? [],
+          color: colorForDeck(deck),
           ...computeDeckStats(cards),
         };
       });
@@ -247,8 +178,7 @@ export default function DecksPage() {
     [decks]
   );
 
-  const handleDeckCreated = async (deck: Deck, metadata: NewDeckMetadata) => {
-    upsertDeckMetadata(deck.id, metadata);
+  const handleDeckCreated = async () => {
     await loadDecks();
   };
 
@@ -371,7 +301,7 @@ export default function DecksPage() {
                 </CardHeader>
 
                 <CardContent className="pt-0">
-                  {deck.tags.length > 0 && (
+                  {deck.tags && deck.tags.length > 0 && (
                     <div className="flex flex-wrap gap-2 mb-3">
                       {deck.tags.slice(0, 4).map((tag) => (
                         <Badge key={tag} variant="outline" className="text-xs">
