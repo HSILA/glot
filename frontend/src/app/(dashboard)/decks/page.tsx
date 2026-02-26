@@ -76,7 +76,11 @@ function readDeckMetadataMap(): Record<string, DeckPresentationMetadata> {
 function writeDeckMetadataMap(value: Record<string, DeckPresentationMetadata>) {
   if (typeof window === "undefined") return;
 
-  window.localStorage.setItem(DECK_PREFS_STORAGE_KEY, JSON.stringify(value));
+  try {
+    window.localStorage.setItem(DECK_PREFS_STORAGE_KEY, JSON.stringify(value));
+  } catch {
+    // Non-fatal: local presentation metadata should not block deck creation.
+  }
 }
 
 function upsertDeckMetadata(deckId: number, metadata: NewDeckMetadata) {
