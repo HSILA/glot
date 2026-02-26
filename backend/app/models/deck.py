@@ -2,13 +2,14 @@
 Deck model, User-owned card organization.
 
 Each deck belongs to a single user and contains cards.
-Supports nested decks for hierarchical organization.
+Flat deck structure (no hierarchy).
 """
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import Column, Index, text
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, JSON
 
 from app.core.datetime_utils import TimestampTZ, utc_now
 
@@ -18,7 +19,7 @@ class Deck(SQLModel, table=True):
     Deck model for organizing cards.
 
     Each deck belongs to exactly one user.
-    Supports parent-child relationships for nested deck hierarchies.
+    Flat structure - no nested decks.
     """
 
     __tablename__ = "decks"
@@ -48,12 +49,16 @@ class Deck(SQLModel, table=True):
         description="Optional deck description",
     )
 
-    # Hierarchy (optional nesting)
-    parent_id: int | None = Field(
+    # Presentation metadata
+    color: str | None = Field(
         default=None,
-        foreign_key="decks.id",
-        index=True,
-        description="Parent deck for nested organization",
+        max_length=7,
+        description="Hex color code for deck accent (e.g., '#ef4444')",
+    )
+    tags: list[str] | None = Field(
+        default=None,
+        sa_column=Column(JSON, nullable=True),
+        description="List of tags for deck organization",
     )
 
     # Timestamps
