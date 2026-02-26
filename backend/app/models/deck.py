@@ -6,10 +6,9 @@ Flat deck structure (no hierarchy).
 """
 
 from datetime import datetime
-from typing import Any
 
-from sqlalchemy import Column, Index, text
-from sqlmodel import Field, SQLModel, JSON
+from sqlalchemy import Column, Index, JSON, text
+from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
 
