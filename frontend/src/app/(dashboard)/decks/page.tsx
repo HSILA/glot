@@ -122,6 +122,25 @@ function computeDeckStats(cards: FlashCard[]) {
   };
 }
 
+async function listAllDecks(): Promise<Deck[]> {
+  const allDecks: Deck[] = [];
+  const limit = 100;
+  let offset = 0;
+
+  while (true) {
+    const page = await decksApi.listDecks({ limit, offset });
+    allDecks.push(...page);
+
+    if (page.length < limit) {
+      break;
+    }
+
+    offset += limit;
+  }
+
+  return allDecks;
+}
+
 async function listAllCards(): Promise<FlashCard[]> {
   const allCards: FlashCard[] = [];
   const limit = 200;
@@ -158,7 +177,7 @@ export default function DecksPage() {
     setError(null);
 
     try {
-      const [userDecks, allCards] = await Promise.all([decksApi.listDecks(), listAllCards()]);
+      const [userDecks, allCards] = await Promise.all([listAllDecks(), listAllCards()]);
 
       const cardsByDeck = new Map<number, FlashCard[]>();
       for (const card of allCards) {
