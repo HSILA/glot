@@ -283,6 +283,7 @@ export default function DecksPage() {
                 </p>
               </div>
             </div>
+            {/* TODO(session): Wire this to live session filtering once session page reads query params and backend due data. */}
             <Button className="w-full sm:w-auto gap-2" onClick={() => router.push("/session") }>
               <Play className="h-4 w-4" />
               Study All Due
@@ -382,6 +383,7 @@ export default function DecksPage() {
                     <span className="text-xs text-muted-foreground">
                       Last studied: {deck.lastStudied}
                     </span>
+                    {/* TODO(session): Ensure /session consumes deck_id and scopes due-card queue to selected deck. */}
                     <Button
                       variant="ghost"
                       size="sm"
