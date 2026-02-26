@@ -22,6 +22,10 @@ class DeckCreate(BaseModel):
             return v
         if not v.startswith('#') or len(v) != 7:
             raise ValueError('Color must be a 7-character hex code starting with #')
+        # Validate hex digits
+        hex_part = v[1:]
+        if not all(c in '0123456789abcdefABCDEF' for c in hex_part):
+            raise ValueError('Color must contain only valid hex digits (0-9, a-f, A-F)')
         return v
 
     @field_validator('tags')
@@ -50,6 +54,10 @@ class DeckUpdate(BaseModel):
             return v
         if not v.startswith('#') or len(v) != 7:
             raise ValueError('Color must be a 7-character hex code starting with #')
+        # Validate hex digits
+        hex_part = v[1:]
+        if not all(c in '0123456789abcdefABCDEF' for c in hex_part):
+            raise ValueError('Color must contain only valid hex digits (0-9, a-f, A-F)')
         return v
 
     @field_validator('tags')
