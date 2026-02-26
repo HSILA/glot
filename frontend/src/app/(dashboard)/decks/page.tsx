@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Plus,
@@ -13,7 +13,6 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
@@ -42,7 +41,6 @@ type DeckWithStats = Deck & {
   totalCards: number;
   newCards: number;
   dueCards: number;
-  masteredCards: number;
   lastStudied: string;
 };
 
@@ -117,7 +115,6 @@ function computeDeckStats(cards: FlashCard[]) {
     totalCards: cards.length,
     newCards: cards.filter((card) => card.state === "new").length,
     dueCards,
-    masteredCards: cards.filter((card) => card.state === "review").length,
     lastStudied: formatLastStudied(lastReviewAt),
   };
 }
@@ -304,11 +301,6 @@ export default function DecksPage() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
           {decks.map((deck) => {
-            const masteryPercent =
-              deck.totalCards > 0
-                ? Math.round((deck.masteredCards / deck.totalCards) * 100)
-                : 0;
-
             return (
               <Card
                 key={deck.id}
@@ -380,18 +372,6 @@ export default function DecksPage() {
                     <span className="text-xs text-muted-foreground ml-auto">
                       {deck.totalCards} total
                     </span>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-muted-foreground">Mastery</span>
-                      <span className="font-medium">{masteryPercent}%</span>
-                    </div>
-                    <Progress
-                      value={masteryPercent}
-                      className="h-2"
-                      style={{ "--tw-progress-color": deck.color } as CSSProperties}
-                    />
                   </div>
 
                   <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
