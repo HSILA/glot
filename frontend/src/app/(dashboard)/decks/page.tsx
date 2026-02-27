@@ -27,7 +27,8 @@ import {
   NewDeckModal,
 } from "@/components/decks/new-deck-modal";
 
-type DeckWithStats = Deck & {
+type DeckWithStats = Omit<Deck, 'color'> & {
+  color: string;
   totalCards: number;
   newCards: number;
   dueCards: number;
