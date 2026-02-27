@@ -260,8 +260,17 @@ export default function DecksPage() {
             return (
               <Card
                 key={deck.id}
-                className="group cursor-pointer hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5"
+                role="link"
+                tabIndex={0}
+                aria-label={`Open deck ${deck.name}`}
+                className="group cursor-pointer hover:shadow-lg transition-all duration-300 hover:-translate-y-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2"
                 onClick={() => router.push(`/decks/${deck.id}`)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    router.push(`/decks/${deck.id}`);
+                  }
+                }}
               >
                 <CardHeader className="pb-3">
                   <div className="flex items-start justify-between gap-2">
@@ -269,7 +278,6 @@ export default function DecksPage() {
                       <div
                         className="w-10 h-10 rounded-lg flex items-center justify-center"
                         style={{ backgroundColor: `${deck.color}20` }}
-                        onClick={(e) => e.stopPropagation()}
                       >
                         <BookOpen className="h-5 w-5" style={{ color: deck.color }} />
                       </div>
@@ -288,8 +296,7 @@ export default function DecksPage() {
                           variant="ghost"
                           size="icon"
                           className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={(e) => e.stopPropagation()}
-                        >
+                          >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
