@@ -109,10 +109,10 @@ export default function DeckDetailPage() {
 
       if (reset) {
         setCards(cardsWithStatus);
-        setOffset(BATCH_SIZE);
+        setOffset(newCards.length);
       } else {
         setCards((prev) => [...prev, ...cardsWithStatus]);
-        setOffset((prev) => prev + BATCH_SIZE);
+        setOffset((prev) => prev + newCards.length);
       }
 
       setHasMore(newCards.length === BATCH_SIZE);
@@ -148,7 +148,7 @@ export default function DeckDetailPage() {
           void loadCards();
         }
       },
-      { threshold: 0.1 }
+      { threshold: 0.1, rootMargin: "100px" }
     );
 
     observerRef.current.observe(loadMoreRef.current);
@@ -181,11 +181,16 @@ export default function DeckDetailPage() {
 
   if (error && !deck) {
     return (
-      <div className="text-center py-20">
+      <div className="text-center py-20 space-y-4">
         <p className="text-muted-foreground">{error}</p>
-        <Button variant="outline" className="mt-4" onClick={() => router.push("/decks")}>
-          Back to Decks
-        </Button>
+        <div className="flex items-center justify-center gap-3">
+          <Button variant="outline" onClick={() => void loadDeck()}>
+            Try Again
+          </Button>
+          <Button variant="ghost" onClick={() => router.push("/decks")}>
+            Back to Decks
+          </Button>
+        </div>
       </div>
     );
   }
@@ -258,7 +263,20 @@ export default function DeckDetailPage() {
           </Button>
         </div>
 
-        {cards.length === 0 && !isLoadingCards ? (
+        {cardsError && cards.length === 0 && !isLoadingCards ? (
+          <Card>
+            <CardContent className="py-16 text-center space-y-4">
+              <p className="text-muted-foreground">{cardsError}</p>
+              <Button
+                variant="outline"
+                onClick={() => void loadCards(true)}
+                className="gap-2"
+              >
+                Try Again
+              </Button>
+            </CardContent>
+          </Card>
+        ) : cards.length === 0 && !isLoadingCards ? (
           <Card>
             <CardContent className="py-16 text-center space-y-4">
               <BookOpen className="h-10 w-10 mx-auto text-muted-foreground/50" />
