@@ -53,6 +53,7 @@ export default function DeckDetailPage() {
   const [isLoadingDeck, setIsLoadingDeck] = useState(true);
   const [isLoadingCards, setIsLoadingCards] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [cardsError, setCardsError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
 
@@ -86,6 +87,7 @@ export default function DeckDetailPage() {
 
     loadingRef.current = true;
     setIsLoadingCards(true);
+    setCardsError(null);
 
     const currentOffset = reset ? 0 : offset;
 
@@ -115,9 +117,7 @@ export default function DeckDetailPage() {
 
       setHasMore(newCards.length === BATCH_SIZE);
     } catch (err) {
-      if (!reset) {
-        setError(err instanceof Error ? err.message : "Failed to load cards");
-      }
+      setCardsError(err instanceof Error ? err.message : "Failed to load cards");
     } finally {
       loadingRef.current = false;
       setIsLoadingCards(false);
@@ -235,7 +235,7 @@ export default function DeckDetailPage() {
           </div>
 
           {deck.tags && deck.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3 ml-15">
+            <div className="flex flex-wrap gap-2 mt-3 ml-[3.75rem]">
               {deck.tags.map((tag) => (
                 <Badge key={tag} variant="outline" className="text-xs">
                   {tag}
@@ -320,16 +320,38 @@ export default function DeckDetailPage() {
             </div>
 
             {/* Load more trigger */}
-            <div ref={loadMoreRef} className="py-4">
+            <div ref={loadMoreRef} className="py-4 space-y-3">
+              {cardsError && (
+                <div className="text-center space-y-2">
+                  <p className="text-sm text-muted-foreground">{cardsError}</p>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void loadCards()}
+                    disabled={isLoadingCards}
+                  >
+                    Try Again
+                  </Button>
+                </div>
+              )}
+
               {isLoadingCards && (
                 <div className="flex items-center justify-center">
                   <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                 </div>
               )}
+
+              {/* Fallback button in case IntersectionObserver doesn't fire */}
+              {hasMore && !isLoadingCards && !cardsError && cards.length > 0 && (
+                <div className="flex justify-center">
+                  <Button variant="outline" onClick={() => void loadCards()}>
+                    Load more
+                  </Button>
+                </div>
+              )}
+
               {!hasMore && cards.length > 0 && (
-                <p className="text-center text-sm text-muted-foreground">
-                  No more cards
-                </p>
+                <p className="text-center text-sm text-muted-foreground">No more cards</p>
               )}
             </div>
           </>
