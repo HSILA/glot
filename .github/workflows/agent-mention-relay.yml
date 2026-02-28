@@ -102,7 +102,7 @@ jobs:
               number = str(pr.get("number") or "")
               title = pr.get("title") or ""
 
-          allowed_authors = {"HSILA", "hsilabot"}
+          allowed_authors = {"HSILA"}
           allowed_assoc = {"OWNER", "MEMBER", "COLLABORATOR"}
 
           mentioned = bool(re.search(r"(^|\s)@hsilabot\b", body or "", flags=re.IGNORECASE))
@@ -116,6 +116,9 @@ jobs:
           elif not mentioned:
               relay = False
               reason = "skip: no @hsilabot mention"
+          elif author in {"hsilabot", "github-actions[bot]"}:
+              relay = False
+              reason = f"skip: bot author @{author}"
           elif author not in allowed_authors:
               relay = False
               reason = f"skip: author @{author} not in allowlist"
