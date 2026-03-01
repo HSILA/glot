@@ -1,10 +1,16 @@
 name: Agent Mention Relay
 
 on:
+  issues:
+    types: [opened, edited, reopened]
+  pull_request:
+    types: [opened, edited, reopened, ready_for_review]
   issue_comment:
-    types: [created]
+    types: [created, edited]
   pull_request_review_comment:
-    types: [created]
+    types: [created, edited]
+  pull_request_review:
+    types: [submitted, edited]
 
 permissions: {}
 
@@ -12,58 +18,171 @@ jobs:
   relay:
     runs-on: [self-hosted]
     timeout-minutes: 2
-    if: >
-      contains(github.event.comment.body, '@hsilabot') &&
-      contains(fromJSON('["HSILA","hsilabot"]'), github.event.comment.user.login) &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
-      github.event.comment.user.login != 'github-actions[bot]'
 
     steps:
-      - name: Build payload
+      - name: Prepare relay payload
+        id: prepare
         env:
-          REPO: ${{ github.repository }}
-          URL: ${{ github.event.comment.html_url }}
-          AUTHOR: ${{ github.event.comment.user.login }}
-          BODY: ${{ github.event.comment.body }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_ACTOR: ${{ github.actor }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           python3 - <<'PY'
           import json
           import os
+          import re
+
+          event_path = os.environ["GITHUB_EVENT_PATH"]
+          event_name = os.getenv("GITHUB_EVENT_NAME", "")
+          actor = os.getenv("GITHUB_ACTOR", "")
+          repo = os.getenv("GITHUB_REPOSITORY", "")
+
+          with open(event_path, "r", encoding="utf-8") as f:
+              event = json.load(f)
+
+          body = ""
+          url = ""
+          author = ""
+          association = ""
+          number = ""
+          title = ""
+          event_type = event_name
+
+          if event_name == "issue_comment":
+              comment = event.get("comment", {})
+              issue = event.get("issue", {})
+              is_pr = "pull_request" in issue
+              event_type = "PR Comment" if is_pr else "Issue Comment"
+              body = comment.get("body") or ""
+              url = comment.get("html_url") or issue.get("html_url") or ""
+              author = (comment.get("user") or {}).get("login") or ""
+              association = comment.get("author_association") or ""
+              number = str(issue.get("number") or "")
+              title = issue.get("title") or ""
+
+          elif event_name == "pull_request_review_comment":
+              comment = event.get("comment", {})
+              pr = event.get("pull_request", {})
+              event_type = "PR Review Comment (line-specific)"
+              body = comment.get("body") or ""
+              url = comment.get("html_url") or pr.get("html_url") or ""
+              author = (comment.get("user") or {}).get("login") or ""
+              association = comment.get("author_association") or ""
+              number = str(pr.get("number") or "")
+              title = pr.get("title") or ""
+
+          elif event_name == "pull_request_review":
+              review = event.get("review", {})
+              pr = event.get("pull_request", {})
+              event_type = "PR Review Submission"
+              body = review.get("body") or ""
+              url = review.get("html_url") or pr.get("html_url") or ""
+              author = (review.get("user") or {}).get("login") or ""
+              association = review.get("author_association") or ""
+              number = str(pr.get("number") or "")
+              title = pr.get("title") or ""
+
+          elif event_name == "issues":
+              issue = event.get("issue", {})
+              event_type = "Issue Body"
+              body = issue.get("body") or ""
+              url = issue.get("html_url") or ""
+              author = (issue.get("user") or {}).get("login") or ""
+              association = issue.get("author_association") or ""
+              number = str(issue.get("number") or "")
+              title = issue.get("title") or ""
+
+          elif event_name == "pull_request":
+              pr = event.get("pull_request", {})
+              event_type = "PR Body"
+              body = pr.get("body") or ""
+              url = pr.get("html_url") or ""
+              author = (pr.get("user") or {}).get("login") or ""
+              association = pr.get("author_association") or ""
+              number = str(pr.get("number") or "")
+              title = pr.get("title") or ""
+
+          allowed_authors = {"HSILA"}
+          allowed_assoc = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+          mentioned = bool(re.search(r"(^|\s)@hsilabot\b", body or "", flags=re.IGNORECASE))
+
+          relay = True
+          reason = ""
+
+          if actor == "github-actions[bot]":
+              relay = False
+              reason = "skip: github-actions bot actor"
+          elif not mentioned:
+              relay = False
+              reason = "skip: no @hsilabot mention"
+          elif author in {"hsilabot", "github-actions[bot]"}:
+              relay = False
+              reason = f"skip: bot author @{author}"
+          elif author not in allowed_authors:
+              relay = False
+              reason = f"skip: author @{author} not in allowlist"
+          elif association not in allowed_assoc:
+              relay = False
+              reason = f"skip: author association {association} not allowed"
+
+          output_path = os.environ["GITHUB_OUTPUT"]
+          with open(output_path, "a", encoding="utf-8") as out:
+              out.write(f"relay={'true' if relay else 'false'}\n")
+              out.write(f"reason={reason or 'ok'}\n")
+
+          if not relay:
+              print(reason)
+              raise SystemExit(0)
 
           lines = [
-              "You were mentioned on GitHub.",
+              "🔔 GitHub mention received",
               "",
-              f"Repo: {os.getenv('REPO')}",
-              f"URL: {os.getenv('URL')}",
-              f"Author: @{os.getenv('AUTHOR')}",
+              f"Type: {event_type}",
+              f"Repo: {repo}",
+              f"PR/Issue: #{number} - {title}",
+              f"Author: @{author}",
+              f"URL: {url}",
               "",
-              "Comment:",
-              os.getenv('BODY') or "",
+              "Comment/body:",
+              body or "(no content)",
               "",
               "Task:",
-              "- Answer the user.",
+              "- Respond to the user request.",
               "- Reply in the same GitHub thread using gh CLI.",
               "- Keep it concise and practical.",
+              "- Act immediately (do not batch).",
           ]
 
           payload = {
               "name": "GitHub",
               "agentId": "main",
               "wakeMode": "now",
-              "deliver": False,
+              "deliver": True,
               "message": "\n".join(lines),
           }
 
           with open("payload.json", "w", encoding="utf-8") as f:
               json.dump(payload, f)
+
+          print(f"relay ready: {event_type} from @{author}")
           PY
 
       - name: Relay request
+        if: steps.prepare.outputs.relay == 'true'
         env:
           AGENT_RELAY_URL: ${{ secrets.AGENT_RELAY_URL }}
           AGENT_RELAY_TOKEN: ${{ secrets.AGENT_RELAY_TOKEN }}
         run: |
-          curl --fail-with-body -sS -X POST "$AGENT_RELAY_URL" \
+          curl --fail-with-body -sS \
+            --retry 3 \
+            --retry-delay 2 \
+            --retry-all-errors \
+            -X POST "$AGENT_RELAY_URL" \
             -H "Authorization: Bearer $AGENT_RELAY_TOKEN" \
             -H "Content-Type: application/json" \
             --data @payload.json
+
+      - name: Skip reason
+        if: steps.prepare.outputs.relay != 'true'
+        run: echo "${{ steps.prepare.outputs.reason }}"
