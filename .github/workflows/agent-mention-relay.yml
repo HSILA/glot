@@ -150,6 +150,7 @@ jobs:
               "Task:",
               "- Respond to the user request.",
               "- Reply in the same GitHub thread using gh CLI.",
+              "- Use GitHub-flavored Markdown in your reply.",
               "- Keep it concise and practical.",
               "- Act immediately (do not batch).",
           ]
