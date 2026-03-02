@@ -153,6 +153,14 @@ jobs:
               "- Use GitHub-flavored Markdown in your reply.",
               "- Keep it concise and practical.",
               "- Act immediately (do not batch).",
+              "",
+              "Review protocol (only when user asks for review):",
+              "- If user specifies a model, delegate review using a sub-agent with that model.",
+              "- Use mode=run and cleanup=delete for delegated review.",
+              "- Perform an actual review across the full PR diff/files.",
+              "- Add inline review comments on exact file/line when applicable.",
+              "- Prefix each review comment with priority tag: [P0]/[P1]/[P2]/[P3].",
+              "- Publish a final review verdict: APPROVE / REQUEST_CHANGES / COMMENT.",
           ]
 
           payload = {
