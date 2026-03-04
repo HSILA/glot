@@ -22,12 +22,22 @@ import { decksApi, type Deck } from "@/lib/api/decks";
 import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
 import { NewCardModal } from "@/components/cards/new-card-modal";
 
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 10;
 
 type CardWithStatus = FlashCard & {
   statusText: string;
   statusColor: string;
 };
+
+function formatDateYYYYMMDD(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 function getCardStatus(card: FlashCard): { text: string; color: string } {
   switch (card.state) {
@@ -57,6 +67,7 @@ export default function DeckDetailPage() {
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [totalCards, setTotalCards] = useState<number | null>(null);
   const [isNewCardOpen, setIsNewCardOpen] = useState(false);
 
   const loadingRef = useRef(false);
@@ -94,13 +105,15 @@ export default function DeckDetailPage() {
     const currentOffset = reset ? 0 : offset;
 
     try {
-      const newCards = await cardsApi.listCards({
+      const response = await cardsApi.listCards({
         deck_id: deckId,
         limit: BATCH_SIZE,
         offset: currentOffset,
       });
 
-      const cardsWithStatus = newCards.map((card) => {
+      setTotalCards(response.total);
+
+      const cardsWithStatus = response.items.map((card) => {
         const status = getCardStatus(card);
         return {
           ...card,
@@ -111,13 +124,13 @@ export default function DeckDetailPage() {
 
       if (reset) {
         setCards(cardsWithStatus);
-        setOffset(newCards.length);
+        setOffset(response.offset + response.items.length);
       } else {
         setCards((prev) => [...prev, ...cardsWithStatus]);
-        setOffset((prev) => prev + newCards.length);
+        setOffset(response.offset + response.items.length);
       }
 
-      setHasMore(newCards.length === BATCH_SIZE);
+      setHasMore(response.offset + response.items.length < response.total);
     } catch (err) {
       setCardsError(err instanceof Error ? err.message : "Failed to load cards");
     } finally {
@@ -257,7 +270,7 @@ export default function DeckDetailPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">
-            Cards ({cards.length})
+            Cards ({totalCards ?? cards.length})
           </h2>
           <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
             <Plus className="h-4 w-4" />
@@ -301,6 +314,12 @@ export default function DeckDetailPage() {
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
                           {card.back_content}
                         </p>
+
+                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
+                          <span>#{card.sequence}</span>
+                          <span>Created: {formatDateYYYYMMDD(card.created_at)}</span>
+                        </div>
+
                         {card.tags && card.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
                             {card.tags.slice(0, 3).map((tag) => (

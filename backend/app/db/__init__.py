@@ -48,6 +48,45 @@ async def init_db() -> None:
             )
             await conn.execute(text("ALTER TABLE decks DROP COLUMN IF EXISTS parent_id"))
 
+            # Cards: deck-local sequence number
+            await conn.execute(
+                text("ALTER TABLE cards ADD COLUMN IF NOT EXISTS sequence INTEGER")
+            )
+
+            # Backfill any missing sequences deterministically (by created_at, then id)
+            # If a deck already has some sequence values, continue from the current max.
+            await conn.execute(
+                text(
+                    """
+                    WITH maxes AS (
+                      SELECT deck_id, COALESCE(MAX(sequence), 0) AS max_seq
+                      FROM cards
+                      GROUP BY deck_id
+                    ),
+                    ranked AS (
+                      SELECT c.id,
+                             c.deck_id,
+                             (m.max_seq + row_number() OVER (PARTITION BY c.deck_id ORDER BY c.created_at ASC, c.id ASC)) AS seq
+                      FROM cards c
+                      JOIN maxes m ON m.deck_id = c.deck_id
+                      WHERE c.sequence IS NULL
+                    )
+                    UPDATE cards c
+                    SET sequence = r.seq
+                    FROM ranked r
+                    WHERE c.id = r.id;
+                    """
+                )
+            )
+
+            # Enforce invariants (safe to run repeatedly)
+            await conn.execute(text("ALTER TABLE cards ALTER COLUMN sequence SET NOT NULL"))
+            await conn.execute(
+                text(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS ux_cards_deck_sequence ON cards (deck_id, sequence)"
+                )
+            )
+
         logger.info("Database tables created/verified")
     except Exception as e:
         logger.error(f"Failed to initialize database: {e}")

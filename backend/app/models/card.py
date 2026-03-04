@@ -59,6 +59,13 @@ class Card(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
 
+    # Deck-local sequence number (stable creation order within a deck)
+    # NOTE: This is NOT the global card id.
+    sequence: int = Field(
+        description="Deck-local incremental number assigned on creation (1..N, may have gaps after deletes)",
+        index=True,
+    )
+
     # Organization (REQUIRED - cards must belong to a deck)
     deck_id: int = Field(
         foreign_key="decks.id",

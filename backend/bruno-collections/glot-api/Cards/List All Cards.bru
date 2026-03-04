@@ -17,8 +17,12 @@ tests {
   test("Status is 200", function() {
     expect(res.status).to.equal(200);
   });
-  
-  test("Returns array", function() {
-    expect(res.body).to.be.an("array");
+
+  test("Returns paginated object", function() {
+    expect(res.body).to.be.an("object");
+    expect(res.body).to.have.property("items");
+    expect(res.body.items).to.be.an("array");
+    expect(res.body).to.have.property("total");
+    expect(res.body.total).to.be.a("number");
   });
 }

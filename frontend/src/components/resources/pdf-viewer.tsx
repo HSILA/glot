@@ -152,18 +152,20 @@ export function PDFViewer({ url, title, open, onOpenChange }: PDFViewerProps) {
     }
   };
 
-  // Reset state when dialog opens
-  useEffect(() => {
-    if (open) {
+  const handleOpenChange = (nextOpen: boolean) => {
+    onOpenChange(nextOpen);
+
+    // Reset state when dialog opens (avoid setState inside an effect)
+    if (nextOpen) {
       setIsLoading(true);
       setError(null);
       setScale(1.0);
       setPageInput("1");
     }
-  }, [open]);
+  };
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="max-w-5xl h-[90vh] flex flex-col p-0 gap-0">
         {/* Header */}
         <DialogHeader className="px-4 py-3 border-b flex-shrink-0">
