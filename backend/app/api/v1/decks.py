@@ -13,11 +13,12 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.dependencies import get_async_session, get_current_user
-from app.models import Deck, User
+from app.models import Card, Deck, User
 from app.schemas import DeckCreate, DeckRead, DeckUpdate
 
 router = APIRouter()
@@ -30,11 +31,32 @@ async def list_decks(
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
-    """List all decks owned by the current user."""
-    query = select(Deck).where(Deck.user_id == current_user.id)
-    query = query.offset(offset).limit(limit)
+    """List all decks owned by the current user (includes cards_count)."""
+
+    # Count cards only for decks owned by the current user (avoid aggregating all cards).
+    counts_subq = (
+        select(Card.deck_id, func.count(Card.id).label("cards_count"))
+        .join(Deck, Deck.id == Card.deck_id)
+        .where(Deck.user_id == current_user.id)
+        .group_by(Card.deck_id)
+        .subquery()
+    )
+
+    query = (
+        select(Deck, func.coalesce(counts_subq.c.cards_count, 0))
+        .outerjoin(counts_subq, counts_subq.c.deck_id == Deck.id)
+        .where(Deck.user_id == current_user.id)
+        .offset(offset)
+        .limit(limit)
+    )
+
     result = await session.execute(query)
-    return result.scalars().all()
+    rows = result.all()
+
+    return [
+        DeckRead.model_validate({**deck.model_dump(), "cards_count": int(cards_count)})
+        for deck, cards_count in rows
+    ]
 
 
 @router.get("/{deck_id}", response_model=DeckRead)
@@ -43,14 +65,27 @@ async def get_deck(
     session: Annotated[AsyncSession, Depends(get_async_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Get a single deck by ID (owned by current user)."""
-    result = await session.execute(
-        select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
+    """Get a single deck by ID (owned by current user, includes cards_count)."""
+
+    counts_subq = (
+        select(Card.deck_id, func.count(Card.id).label("cards_count"))
+        .where(Card.deck_id == deck_id)
+        .group_by(Card.deck_id)
+        .subquery()
     )
-    deck = result.scalar_one_or_none()
-    if not deck:
+
+    result = await session.execute(
+        select(Deck, func.coalesce(counts_subq.c.cards_count, 0))
+        .outerjoin(counts_subq, counts_subq.c.deck_id == Deck.id)
+        .where(Deck.id == deck_id, Deck.user_id == current_user.id)
+    )
+
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="Deck not found")
-    return deck
+
+    deck, cards_count = row
+    return DeckRead.model_validate({**deck.model_dump(), "cards_count": int(cards_count)})
 
 
 @router.post("", response_model=DeckRead, status_code=201)

@@ -4,6 +4,7 @@ export type CardState = "new" | "learning" | "review" | "relearning";
 
 export interface Card {
   id: number;
+  sequence: number;
   front_content: string;
   back_content: string;
   meta_data: Record<string, unknown>;
@@ -26,6 +27,13 @@ export interface ListCardsOptions {
   tag?: string;
   limit?: number;
   offset?: number;
+}
+
+export interface CardListResponse {
+  items: Card[];
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 export interface DueCardsOptions {
@@ -88,6 +96,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
 function assertCard(value: unknown, context = "Card"): asserts value is Card {
   if (!isObject(value)) throw new Error(`${context}: expected object`);
   if (typeof value.id !== "number") throw new Error(`${context}: invalid id`);
+  if (typeof value.sequence !== "number") throw new Error(`${context}: invalid sequence`);
   if (typeof value.front_content !== "string") throw new Error(`${context}: invalid front_content`);
   if (typeof value.back_content !== "string") throw new Error(`${context}: invalid back_content`);
   if (!isObject(value.meta_data)) throw new Error(`${context}: invalid meta_data`);
@@ -122,6 +131,21 @@ function parseCard(value: unknown, context = "Card"): Card {
 function parseCardArray(value: unknown, context = "Cards"): Card[] {
   if (!Array.isArray(value)) throw new Error(`${context}: expected array`);
   return value.map((item, index) => parseCard(item, `${context}[${index}]`));
+}
+
+function parseCardListResponse(value: unknown, context = "Card list response"): CardListResponse {
+  if (!isObject(value)) throw new Error(`${context}: expected object`);
+  const items = parseCardArray(value.items, `${context}.items`);
+  if (typeof value.total !== "number") throw new Error(`${context}: invalid total`);
+  if (typeof value.limit !== "number") throw new Error(`${context}: invalid limit`);
+  if (typeof value.offset !== "number") throw new Error(`${context}: invalid offset`);
+
+  return {
+    items,
+    total: value.total,
+    limit: value.limit,
+    offset: value.offset,
+  };
 }
 
 function assertSchedulingInfo(value: unknown, context: string): asserts value is SchedulingInfo {
@@ -163,7 +187,7 @@ class CardsApi {
     throw new Error(fallback);
   }
 
-  async listCards(options: ListCardsOptions = {}): Promise<Card[]> {
+  async listCards(options: ListCardsOptions = {}): Promise<CardListResponse> {
     const params = new URLSearchParams();
 
     if (options.state) {
@@ -188,7 +212,7 @@ class CardsApi {
     }
 
     const data = await response.json();
-    return parseCardArray(data, "List cards response");
+    return parseCardListResponse(data, "List cards response");
   }
 
   async getDueCards(options: DueCardsOptions = {}): Promise<Card[]> {

@@ -6,6 +6,7 @@ export interface Deck {
   description: string | null;
   color: string | null;
   tags: string[] | null;
+  cards_count: number;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,7 @@ function assertDeck(value: unknown, context = "Deck"): asserts value is Deck {
   if (!(value.tags === null || (Array.isArray(value.tags) && value.tags.every(t => typeof t === "string")))) {
     throw new Error(`${context}: invalid tags`);
   }
+  if (typeof value.cards_count !== "number") throw new Error(`${context}: invalid cards_count`);
   if (typeof value.created_at !== "string") throw new Error(`${context}: invalid created_at`);
   if (typeof value.updated_at !== "string") throw new Error(`${context}: invalid updated_at`);
 }

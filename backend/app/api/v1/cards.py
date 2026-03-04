@@ -18,6 +18,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import func
 from sqlmodel import select
 
 from app.core import get_settings
@@ -27,7 +28,13 @@ from app.dependencies import (
     get_user_settings,
 )
 from app.models import Card, CardState, Deck, ReviewLog, User
-from app.schemas import CardCreate, CardRead, CardUpdate, NextStatesResponse
+from app.schemas import (
+    CardCreate,
+    CardListResponse,
+    CardRead,
+    CardUpdate,
+    NextStatesResponse,
+)
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
 
@@ -82,14 +89,14 @@ async def get_fsrs_service_from_db(
     )
 
 
-@router.get("", response_model=list[CardRead])
+@router.get("", response_model=CardListResponse)
 async def list_cards(
     session: Annotated[AsyncSession, Depends(get_async_session)],
     current_user: Annotated[User, Depends(get_current_user)],
     state: CardState | None = None,
     deck_id: int | None = None,
     tag: str | None = Query(None, description="Filter by tag"),
-    limit: int = Query(100, ge=1, le=1000),
+    limit: int = Query(10, ge=1, le=1000),
     offset: int = Query(0, ge=0),
 ):
     """
@@ -105,21 +112,39 @@ async def list_cards(
         if not deck:
             raise HTTPException(status_code=404, detail="Deck not found")
 
-    query = select(Card).join(Deck, Card.deck_id == Deck.id).where(
-        Deck.user_id == current_user.id
-    )
+    base_filters = [Deck.user_id == current_user.id]
 
     if state:
-        query = query.where(Card.state == state)
+        base_filters.append(Card.state == state)
     if deck_id:
-        query = query.where(Card.deck_id == deck_id)
+        base_filters.append(Card.deck_id == deck_id)
     if tag:
         # JSONB array containment for tags
-        query = query.where(Card.tags.contains([tag]))
+        base_filters.append(Card.tags.contains([tag]))
 
-    query = query.offset(offset).limit(limit)
-    result = await session.execute(query)
-    return result.scalars().all()
+    # Total count (for pagination + correct "no more cards" UI)
+    total_query = (
+        select(func.count())
+        .select_from(Card)
+        .join(Deck, Card.deck_id == Deck.id)
+        .where(*base_filters)
+    )
+    total = (await session.execute(total_query)).scalar_one()
+
+    # Deterministic ordering: newest first
+    items_query = (
+        select(Card)
+        .join(Deck, Card.deck_id == Deck.id)
+        .where(*base_filters)
+        .order_by(Card.created_at.desc(), Card.id.desc())
+        .offset(offset)
+        .limit(limit)
+    )
+
+    result = await session.execute(items_query)
+    items = result.scalars().all()
+
+    return CardListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/due", response_model=list[CardRead])
@@ -190,11 +215,22 @@ async def create_card(
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
-    card = Card(**card_data.model_dump())
+    # Lock deck row to avoid sequence races when multiple cards are created concurrently.
+    await session.execute(select(Deck).where(Deck.id == deck.id).with_for_update())
+
+    next_sequence_query = select(func.coalesce(func.max(Card.sequence), 0) + 1).where(
+        Card.deck_id == deck.id
+    )
+    next_sequence = (await session.execute(next_sequence_query)).scalar_one()
+
+    payload = card_data.model_dump()
+    payload["sequence"] = int(next_sequence)
+
+    card = Card(**payload)
     session.add(card)
     await session.flush()
     await session.refresh(card)
-    logger.info(f"Created card {card.id}: {card.front_content[:50]}")
+    logger.info(f"Created card {card.id} (seq={card.sequence})")
     return card
 
 
@@ -219,9 +255,25 @@ async def update_card(
                 detail="deck_id cannot be null",
             )
 
-        target_deck = await _get_owned_deck(session, update_data["deck_id"], current_user.id)
+        target_deck = await _get_owned_deck(
+            session, update_data["deck_id"], current_user.id
+        )
         if not target_deck:
             raise HTTPException(status_code=404, detail="Deck not found")
+
+        # If moving decks, assign a new sequence in the target deck.
+        if int(update_data["deck_id"]) != int(card.deck_id):
+            await session.execute(
+                select(Deck)
+                .where(Deck.id == target_deck.id)
+                .with_for_update()
+            )
+            next_sequence_query = select(
+                func.coalesce(func.max(Card.sequence), 0) + 1
+            ).where(Card.deck_id == target_deck.id)
+            update_data["sequence"] = int(
+                (await session.execute(next_sequence_query)).scalar_one()
+            )
 
     for key, value in update_data.items():
         setattr(card, key, value)

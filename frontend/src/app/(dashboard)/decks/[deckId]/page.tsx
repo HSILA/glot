@@ -20,13 +20,24 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { decksApi, type Deck } from "@/lib/api/decks";
 import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
+import { NewCardModal } from "@/components/cards/new-card-modal";
 
-const BATCH_SIZE = 20;
+const BATCH_SIZE = 10;
 
 type CardWithStatus = FlashCard & {
   statusText: string;
   statusColor: string;
 };
+
+function formatDateYYYYMMDD(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
 
 function getCardStatus(card: FlashCard): { text: string; color: string } {
   switch (card.state) {
@@ -56,8 +67,11 @@ export default function DeckDetailPage() {
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [totalCards, setTotalCards] = useState<number | null>(null);
+  const [isNewCardOpen, setIsNewCardOpen] = useState(false);
 
   const loadingRef = useRef(false);
+  const pendingResetRef = useRef(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
@@ -82,7 +96,14 @@ export default function DeckDetailPage() {
   }, [deckId]);
 
   const loadCards = useCallback(async (reset = false) => {
-    if (loadingRef.current) return;
+    // If a reset is requested while an infinite-scroll fetch is in flight,
+    // queue it and run it immediately after the current request finishes.
+    if (loadingRef.current) {
+      if (reset) {
+        pendingResetRef.current = true;
+      }
+      return;
+    }
     if (!reset && !hasMore) return;
 
     loadingRef.current = true;
@@ -92,13 +113,15 @@ export default function DeckDetailPage() {
     const currentOffset = reset ? 0 : offset;
 
     try {
-      const newCards = await cardsApi.listCards({
+      const response = await cardsApi.listCards({
         deck_id: deckId,
         limit: BATCH_SIZE,
         offset: currentOffset,
       });
 
-      const cardsWithStatus = newCards.map((card) => {
+      setTotalCards(response.total);
+
+      const cardsWithStatus = response.items.map((card) => {
         const status = getCardStatus(card);
         return {
           ...card,
@@ -109,18 +132,24 @@ export default function DeckDetailPage() {
 
       if (reset) {
         setCards(cardsWithStatus);
-        setOffset(newCards.length);
+        setOffset(response.offset + response.items.length);
       } else {
         setCards((prev) => [...prev, ...cardsWithStatus]);
-        setOffset((prev) => prev + newCards.length);
+        setOffset(response.offset + response.items.length);
       }
 
-      setHasMore(newCards.length === BATCH_SIZE);
+      setHasMore(response.offset + response.items.length < response.total);
     } catch (err) {
       setCardsError(err instanceof Error ? err.message : "Failed to load cards");
     } finally {
       loadingRef.current = false;
       setIsLoadingCards(false);
+
+      if (pendingResetRef.current) {
+        pendingResetRef.current = false;
+        // Fire-and-forget; loadCards handles its own loading guard.
+        void loadCards(true);
+      }
     }
   }, [deckId, offset, hasMore]);
 
@@ -255,9 +284,9 @@ export default function DeckDetailPage() {
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-lg font-semibold">
-            Cards ({cards.length})
+            Cards ({totalCards ?? cards.length})
           </h2>
-          <Button className="gap-2" disabled>
+          <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
             <Plus className="h-4 w-4" />
             New Card
           </Button>
@@ -281,7 +310,7 @@ export default function DeckDetailPage() {
             <CardContent className="py-16 text-center space-y-4">
               <BookOpen className="h-10 w-10 mx-auto text-muted-foreground/50" />
               <p className="text-muted-foreground">No cards in this deck yet.</p>
-              <Button className="gap-2" disabled>
+              <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
                 <Plus className="h-4 w-4" />
                 Add your first card
               </Button>
@@ -293,12 +322,19 @@ export default function DeckDetailPage() {
               {cards.map((card) => (
                 <Card key={card.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center justify-between gap-4">
+                      {/* Left "front matter" */}
+                      <div className="w-10 flex-shrink-0 text-xs text-muted-foreground font-mono tabular-nums text-left">
+                        #{card.sequence}
+                      </div>
+
+                      {/* Main content */}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium line-clamp-2">{card.front_content}</p>
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
                           {card.back_content}
                         </p>
+
                         {card.tags && card.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
                             {card.tags.slice(0, 3).map((tag) => (
@@ -314,7 +350,14 @@ export default function DeckDetailPage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+
+                      {/* Middle (date) */}
+                      <div className="w-28 flex-shrink-0 text-center text-xs text-muted-foreground tabular-nums">
+                        {formatDateYYYYMMDD(card.created_at)}
+                      </div>
+
+                      {/* Right actions */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
                         <Badge className={card.statusColor}>{card.statusText}</Badge>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -368,13 +411,18 @@ export default function DeckDetailPage() {
                 </div>
               )}
 
-              {!hasMore && cards.length > 0 && (
-                <p className="text-center text-sm text-muted-foreground">No more cards</p>
-              )}
+              {/* When we've reached the end, don't show extra text. */}
             </div>
           </>
         )}
       </div>
+
+      <NewCardModal
+        open={isNewCardOpen}
+        onOpenChange={setIsNewCardOpen}
+        deckId={deckId}
+        onSuccess={() => void loadCards(true)}
+      />
     </div>
   );
 }

@@ -105,13 +105,13 @@ async function listAllCards(): Promise<FlashCard[]> {
 
   while (true) {
     const page = await cardsApi.listCards({ limit, offset });
-    allCards.push(...page);
+    allCards.push(...page.items);
 
-    if (page.length < limit) {
+    if (page.offset + page.items.length >= page.total) {
       break;
     }
 
-    offset += limit;
+    offset += page.items.length;
   }
 
   return allCards;
@@ -146,11 +146,14 @@ export default function DecksPage() {
 
       const decksWithStats = userDecks.map((deck) => {
         const cards = cardsByDeck.get(deck.id) ?? [];
+        const stats = computeDeckStats(cards);
 
         return {
           ...deck,
           color: colorForDeck(deck),
-          ...computeDeckStats(cards),
+          ...stats,
+          // Use backend-provided count for "total" wherever possible.
+          totalCards: deck.cards_count,
         };
       });
 

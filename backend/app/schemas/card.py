@@ -34,6 +34,7 @@ class CardRead(BaseModel):
     """Schema for reading a card (response)."""
 
     id: int
+    sequence: int
 
     front_content: str
     back_content: str
@@ -55,6 +56,15 @@ class CardRead(BaseModel):
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CardListResponse(BaseModel):
+    """Paginated card list response."""
+
+    items: list[CardRead]
+    total: int
+    limit: int
+    offset: int
 
 
 class ReviewRequest(BaseModel):
