@@ -308,17 +308,18 @@ export default function DeckDetailPage() {
               {cards.map((card) => (
                 <Card key={card.id} className="hover:shadow-md transition-shadow">
                   <CardContent className="p-4">
-                    <div className="flex items-start justify-between gap-4">
+                    <div className="flex items-center justify-between gap-4">
+                      {/* Left "front matter" */}
+                      <div className="w-10 flex-shrink-0 text-xs text-muted-foreground font-mono tabular-nums text-left">
+                        #{card.sequence}
+                      </div>
+
+                      {/* Main content */}
                       <div className="flex-1 min-w-0">
                         <p className="font-medium line-clamp-2">{card.front_content}</p>
                         <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
                           {card.back_content}
                         </p>
-
-                        <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-muted-foreground">
-                          <span>#{card.sequence}</span>
-                          <span>Created: {formatDateYYYYMMDD(card.created_at)}</span>
-                        </div>
 
                         {card.tags && card.tags.length > 0 && (
                           <div className="flex flex-wrap gap-1 mt-2">
@@ -335,7 +336,14 @@ export default function DeckDetailPage() {
                           </div>
                         )}
                       </div>
-                      <div className="flex items-center gap-2">
+
+                      {/* Middle (date) */}
+                      <div className="w-28 flex-shrink-0 text-center text-xs text-muted-foreground tabular-nums">
+                        {formatDateYYYYMMDD(card.created_at)}
+                      </div>
+
+                      {/* Right actions */}
+                      <div className="flex items-center gap-2 flex-shrink-0">
                         <Badge className={card.statusColor}>{card.statusText}</Badge>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -389,9 +397,7 @@ export default function DeckDetailPage() {
                 </div>
               )}
 
-              {!hasMore && cards.length > 0 && (
-                <p className="text-center text-sm text-muted-foreground">No more cards</p>
-              )}
+              {/* When we've reached the end, don't show extra text. */}
             </div>
           </>
         )}
