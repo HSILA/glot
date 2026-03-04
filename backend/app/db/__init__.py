@@ -68,7 +68,7 @@ async def init_db() -> None:
                              c.deck_id,
                              (m.max_seq + row_number() OVER (PARTITION BY c.deck_id ORDER BY c.created_at ASC, c.id ASC)) AS seq
                       FROM cards c
-                      JOIN maxes m ON m.deck_id = c.deck_id
+                      JOIN maxes m ON m.deck_id IS NOT DISTINCT FROM c.deck_id
                       WHERE c.sequence IS NULL
                     )
                     UPDATE cards c
