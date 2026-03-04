@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column, Index, text
+from sqlalchemy import Column, Index, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
@@ -55,6 +55,8 @@ class Card(SQLModel, table=True):
         Index("ix_cards_deck_next_review", "deck_id", "next_review_at"),
         # Composite index for "cards by state in deck" query
         Index("ix_cards_deck_state", "deck_id", "state"),
+        # Enforce stable per-deck sequence uniqueness (gaps allowed)
+        UniqueConstraint("deck_id", "sequence", name="ux_cards_deck_sequence"),
     )
 
     id: int | None = Field(default=None, primary_key=True)

@@ -33,8 +33,11 @@ async def list_decks(
 ):
     """List all decks owned by the current user (includes cards_count)."""
 
+    # Count cards only for decks owned by the current user (avoid aggregating all cards).
     counts_subq = (
         select(Card.deck_id, func.count(Card.id).label("cards_count"))
+        .join(Deck, Deck.id == Card.deck_id)
+        .where(Deck.user_id == current_user.id)
         .group_by(Card.deck_id)
         .subquery()
     )
