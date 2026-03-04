@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { decksApi, type Deck } from "@/lib/api/decks";
 import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
+import { NewCardModal } from "@/components/cards/new-card-modal";
 
 const BATCH_SIZE = 20;
 
@@ -56,6 +57,7 @@ export default function DeckDetailPage() {
   const [cardsError, setCardsError] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [offset, setOffset] = useState(0);
+  const [isNewCardOpen, setIsNewCardOpen] = useState(false);
 
   const loadingRef = useRef(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -257,7 +259,7 @@ export default function DeckDetailPage() {
           <h2 className="text-lg font-semibold">
             Cards ({cards.length})
           </h2>
-          <Button className="gap-2" disabled>
+          <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
             <Plus className="h-4 w-4" />
             New Card
           </Button>
@@ -281,7 +283,7 @@ export default function DeckDetailPage() {
             <CardContent className="py-16 text-center space-y-4">
               <BookOpen className="h-10 w-10 mx-auto text-muted-foreground/50" />
               <p className="text-muted-foreground">No cards in this deck yet.</p>
-              <Button className="gap-2" disabled>
+              <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
                 <Plus className="h-4 w-4" />
                 Add your first card
               </Button>
@@ -375,6 +377,13 @@ export default function DeckDetailPage() {
           </>
         )}
       </div>
+
+      <NewCardModal
+        open={isNewCardOpen}
+        onOpenChange={setIsNewCardOpen}
+        deckId={deckId}
+        onSuccess={() => void loadCards(true)}
+      />
     </div>
   );
 }
