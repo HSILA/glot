@@ -71,6 +71,7 @@ export default function DeckDetailPage() {
   const [isNewCardOpen, setIsNewCardOpen] = useState(false);
 
   const loadingRef = useRef(false);
+  const pendingResetRef = useRef(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
   const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
@@ -95,7 +96,14 @@ export default function DeckDetailPage() {
   }, [deckId]);
 
   const loadCards = useCallback(async (reset = false) => {
-    if (loadingRef.current) return;
+    // If a reset is requested while an infinite-scroll fetch is in flight,
+    // queue it and run it immediately after the current request finishes.
+    if (loadingRef.current) {
+      if (reset) {
+        pendingResetRef.current = true;
+      }
+      return;
+    }
     if (!reset && !hasMore) return;
 
     loadingRef.current = true;
@@ -136,6 +144,12 @@ export default function DeckDetailPage() {
     } finally {
       loadingRef.current = false;
       setIsLoadingCards(false);
+
+      if (pendingResetRef.current) {
+        pendingResetRef.current = false;
+        // Fire-and-forget; loadCards handles its own loading guard.
+        void loadCards(true);
+      }
     }
   }, [deckId, offset, hasMore]);
 
