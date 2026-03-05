@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+import { Loader2, Plus, Save, X } from "lucide-react";
 import { toast } from "sonner";
 import { type Card, cardsApi } from "@/lib/api/cards";
 import { Button } from "@/components/ui/button";
@@ -15,16 +15,13 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 
-function parseTags(value: string): string[] {
-  return value
-    .split(",")
-    .map((tag) => tag.trim())
-    .filter(Boolean);
-}
+const MAX_TAGS = 8;
+const TAG_MAX = 24;
 
-function formatTags(tags: string[] | null | undefined): string {
-  return (tags ?? []).join(", ");
+function normalizeTag(value: string): string {
+  return value.trim();
 }
 
 interface EditCardModalProps {
@@ -37,11 +34,12 @@ interface EditCardModalProps {
 export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardModalProps) {
   const initialFront = card?.front_content ?? "";
   const initialBack = card?.back_content ?? "";
-  const initialTags = useMemo(() => formatTags(card?.tags), [card?.tags]);
+  const initialTags = useMemo(() => card?.tags ?? [], [card?.tags]);
 
   const [frontContent, setFrontContent] = useState(initialFront);
   const [backContent, setBackContent] = useState(initialBack);
-  const [tags, setTags] = useState(initialTags);
+  const [tagInput, setTagInput] = useState("");
+  const [tags, setTags] = useState<string[]>(initialTags);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +47,7 @@ export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardM
     // Keep form in sync when switching which card is being edited.
     setFrontContent(initialFront);
     setBackContent(initialBack);
+    setTagInput("");
     setTags(initialTags);
     setError(null);
   }, [initialFront, initialBack, initialTags, open]);
@@ -59,6 +58,33 @@ export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardM
       setError(null);
     }
     onOpenChange(nextOpen);
+  };
+
+  const addTagFromInput = () => {
+    const tag = normalizeTag(tagInput);
+    if (!tag) return;
+
+    if (tag.length > TAG_MAX) {
+      toast.error(`Tags must be ${TAG_MAX} characters or less.`);
+      return;
+    }
+
+    if (tags.length >= MAX_TAGS) {
+      toast.error(`You can add up to ${MAX_TAGS} tags.`);
+      return;
+    }
+
+    if (tags.some((existing) => existing.toLowerCase() === tag.toLowerCase())) {
+      toast.error("Tag already added.");
+      return;
+    }
+
+    setTags((prev) => [...prev, tag]);
+    setTagInput("");
+  };
+
+  const removeTag = (tagToRemove: string) => {
+    setTags((prev) => prev.filter((tag) => tag !== tagToRemove));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -86,7 +112,7 @@ export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardM
       await cardsApi.updateCard(card.id, {
         front_content: frontContent.trim(),
         back_content: backContent.trim(),
-        tags: parseTags(tags),
+        tags,
       });
 
       toast.success("Card updated");
@@ -135,15 +161,51 @@ export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardM
               />
             </div>
 
-            <div className="grid gap-2">
-              <Label htmlFor="edit-card-tags">Tags (comma-separated)</Label>
-              <Input
-                id="edit-card-tags"
-                placeholder="e.g. math, calculus"
-                value={tags}
-                onChange={(e) => setTags(e.target.value)}
-                disabled={isSubmitting}
-              />
+            <div className="space-y-2">
+              <Label htmlFor="edit-card-tags">Tags</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="edit-card-tags"
+                  value={tagInput}
+                  onChange={(e) => setTagInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === ",") {
+                      e.preventDefault();
+                      addTagFromInput();
+                    }
+                  }}
+                  placeholder="Press Enter to add tag"
+                  maxLength={TAG_MAX}
+                  disabled={isSubmitting || tags.length >= MAX_TAGS}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addTagFromInput}
+                  disabled={isSubmitting || !tagInput.trim() || tags.length >= MAX_TAGS}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap gap-2 min-h-6">
+                {tags.map((tag) => (
+                  <Badge key={tag} variant="secondary" className="gap-1 pr-1">
+                    {tag}
+                    <button
+                      type="button"
+                      onClick={() => removeTag(tag)}
+                      className="rounded hover:bg-black/10 p-0.5"
+                      aria-label={`Remove tag ${tag}`}
+                      disabled={isSubmitting}
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </Badge>
+                ))}
+              </div>
+
+              <p className="text-xs text-muted-foreground">Up to {MAX_TAGS} tags.</p>
             </div>
           </div>
 
