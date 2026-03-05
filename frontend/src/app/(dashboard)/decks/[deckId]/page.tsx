@@ -75,6 +75,16 @@ export default function DeckDetailPage() {
   const [isEditCardOpen, setIsEditCardOpen] = useState(false);
   const [isDeleteCardOpen, setIsDeleteCardOpen] = useState(false);
 
+  const handleEditCardOpenChange = (open: boolean) => {
+    setIsEditCardOpen(open);
+    if (!open) setSelectedCard(null);
+  };
+
+  const handleDeleteCardOpenChange = (open: boolean) => {
+    setIsDeleteCardOpen(open);
+    if (!open) setSelectedCard(null);
+  };
+
   const loadingRef = useRef(false);
   const pendingResetRef = useRef(false);
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -443,15 +453,15 @@ export default function DeckDetailPage() {
       />
 
       <EditCardModal
-        open={isEditCardOpen}
-        onOpenChange={setIsEditCardOpen}
+        open={isEditCardOpen && !!selectedCard}
+        onOpenChange={handleEditCardOpenChange}
         card={selectedCard}
         onSuccess={() => void loadCards(true)}
       />
 
       <DeleteCardModal
-        open={isDeleteCardOpen}
-        onOpenChange={setIsDeleteCardOpen}
+        open={isDeleteCardOpen && !!selectedCard}
+        onOpenChange={handleDeleteCardOpenChange}
         card={selectedCard}
         onDeleted={() => void loadCards(true)}
       />

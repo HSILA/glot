@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Plus, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -56,6 +57,7 @@ export function NewCardModal({
         back_content: backContent.trim(),
       });
 
+      toast.success("Card created");
       setFrontContent("");
       setBackContent("");
       onOpenChange(false);
