@@ -21,6 +21,8 @@ import {
 import { decksApi, type Deck } from "@/lib/api/decks";
 import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
 import { NewCardModal } from "@/components/cards/new-card-modal";
+import { EditCardModal } from "@/components/cards/edit-card-modal";
+import { DeleteCardModal } from "@/components/cards/delete-card-modal";
 
 const BATCH_SIZE = 10;
 
@@ -69,6 +71,9 @@ export default function DeckDetailPage() {
   const [offset, setOffset] = useState(0);
   const [totalCards, setTotalCards] = useState<number | null>(null);
   const [isNewCardOpen, setIsNewCardOpen] = useState(false);
+  const [selectedCard, setSelectedCard] = useState<FlashCard | null>(null);
+  const [isEditCardOpen, setIsEditCardOpen] = useState(false);
+  const [isDeleteCardOpen, setIsDeleteCardOpen] = useState(false);
 
   const loadingRef = useRef(false);
   const pendingResetRef = useRef(false);
@@ -366,9 +371,22 @@ export default function DeckDetailPage() {
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end">
-                            <DropdownMenuItem disabled>Edit</DropdownMenuItem>
+                            <DropdownMenuItem
+                              onSelect={() => {
+                                setSelectedCard(card);
+                                setIsEditCardOpen(true);
+                              }}
+                            >
+                              Edit
+                            </DropdownMenuItem>
                             <DropdownMenuItem disabled>Export</DropdownMenuItem>
-                            <DropdownMenuItem className="text-destructive" disabled>
+                            <DropdownMenuItem
+                              className="text-destructive"
+                              onSelect={() => {
+                                setSelectedCard(card);
+                                setIsDeleteCardOpen(true);
+                              }}
+                            >
                               Delete
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -422,6 +440,20 @@ export default function DeckDetailPage() {
         onOpenChange={setIsNewCardOpen}
         deckId={deckId}
         onSuccess={() => void loadCards(true)}
+      />
+
+      <EditCardModal
+        open={isEditCardOpen}
+        onOpenChange={setIsEditCardOpen}
+        card={selectedCard}
+        onSuccess={() => void loadCards(true)}
+      />
+
+      <DeleteCardModal
+        open={isDeleteCardOpen}
+        onOpenChange={setIsDeleteCardOpen}
+        card={selectedCard}
+        onDeleted={() => void loadCards(true)}
       />
     </div>
   );
