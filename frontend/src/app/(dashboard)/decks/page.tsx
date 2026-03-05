@@ -26,6 +26,8 @@ import {
   DECK_COLOR_OPTIONS,
   NewDeckModal,
 } from "@/components/decks/new-deck-modal";
+import { EditDeckModal } from "@/components/decks/edit-deck-modal";
+import { DeleteDeckModal } from "@/components/decks/delete-deck-modal";
 
 type DeckWithStats = Omit<Deck, 'color'> & {
   color: string;
@@ -124,6 +126,8 @@ export default function DecksPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateDeckOpen, setIsCreateDeckOpen] = useState(false);
+  const [deckToEdit, setDeckToEdit] = useState<Deck | null>(null);
+  const [deckToDelete, setDeckToDelete] = useState<Deck | null>(null);
 
   const requestIdRef = useRef(0);
 
@@ -183,6 +187,14 @@ export default function DecksPage() {
   );
 
   const handleDeckCreated = async () => {
+    await loadDecks();
+  };
+
+  const handleDeckUpdated = async () => {
+    await loadDecks();
+  };
+
+  const handleDeckDeleted = async () => {
     await loadDecks();
   };
 
@@ -305,9 +317,24 @@ export default function DecksPage() {
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem disabled>Edit</DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeckToEdit(deck);
+                          }}
+                        >
+                          Edit
+                        </DropdownMenuItem>
                         <DropdownMenuItem disabled>Export</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive" disabled>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeckToDelete(deck);
+                          }}
+                        >
                           Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -373,6 +400,28 @@ export default function DecksPage() {
         onOpenChange={setIsCreateDeckOpen}
         onCreated={handleDeckCreated}
       />
+
+      {deckToEdit && (
+        <EditDeckModal
+          open={Boolean(deckToEdit)}
+          onOpenChange={(open) => {
+            if (!open) setDeckToEdit(null);
+          }}
+          deck={deckToEdit}
+          onUpdated={() => void handleDeckUpdated()}
+        />
+      )}
+
+      {deckToDelete && (
+        <DeleteDeckModal
+          open={Boolean(deckToDelete)}
+          onOpenChange={(open) => {
+            if (!open) setDeckToDelete(null);
+          }}
+          deck={deckToDelete}
+          onDeleted={() => void handleDeckDeleted()}
+        />
+      )}
     </div>
   );
 }
