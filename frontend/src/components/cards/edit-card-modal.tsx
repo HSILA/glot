@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
-import { Plus, Loader2, X } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Loader2, Plus, Save, X } from "lucide-react";
 import { toast } from "sonner";
+import { type Card, cardsApi } from "@/lib/api/cards";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -12,36 +13,55 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { cardsApi } from "@/lib/api/cards";
 
 const MAX_TAGS = 8;
 const TAG_MAX = 24;
 
-interface NewCardModalProps {
+function normalizeTag(value: string): string {
+  return value.trim();
+}
+
+interface EditCardModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  deckId: number;
+  card: Card | null;
   onSuccess?: () => void;
 }
 
-export function NewCardModal({
-  open,
-  onOpenChange,
-  deckId,
-  onSuccess,
-}: NewCardModalProps) {
-  const [frontContent, setFrontContent] = useState("");
-  const [backContent, setBackContent] = useState("");
+export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardModalProps) {
+  const initialFront = card?.front_content ?? "";
+  const initialBack = card?.back_content ?? "";
+  const initialTags = useMemo(() => card?.tags ?? [], [card?.tags]);
+
+  const [frontContent, setFrontContent] = useState(initialFront);
+  const [backContent, setBackContent] = useState(initialBack);
   const [tagInput, setTagInput] = useState("");
-  const [tags, setTags] = useState<string[]>([]);
+  const [tags, setTags] = useState<string[]>(initialTags);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    // Keep form in sync when switching which card is being edited.
+    setFrontContent(initialFront);
+    setBackContent(initialBack);
+    setTagInput("");
+    setTags(initialTags);
+    setError(null);
+  }, [initialFront, initialBack, initialTags, open]);
+
+  const handleOpenChange = (nextOpen: boolean) => {
+    if (!nextOpen && isSubmitting) return;
+    if (!nextOpen) {
+      setError(null);
+    }
+    onOpenChange(nextOpen);
+  };
+
   const addTagFromInput = () => {
-    const tag = tagInput.trim();
+    const tag = normalizeTag(tagInput);
     if (!tag) return;
 
     if (tag.length > TAG_MAX) {
@@ -71,6 +91,11 @@ export function NewCardModal({
     e.preventDefault();
     setError(null);
 
+    if (!card) {
+      setError("No card selected");
+      return;
+    }
+
     if (!frontContent.trim()) {
       setError("Front content is required");
       return;
@@ -84,66 +109,51 @@ export function NewCardModal({
     setIsSubmitting(true);
 
     try {
-      await cardsApi.createCard({
-        deck_id: deckId,
+      await cardsApi.updateCard(card.id, {
         front_content: frontContent.trim(),
         back_content: backContent.trim(),
         tags,
       });
 
-      toast.success("Card created");
-      setFrontContent("");
-      setBackContent("");
+      toast.success("Card updated");
       onOpenChange(false);
       onSuccess?.();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create card");
+      const message = err instanceof Error ? err.message : "Failed to update card";
+      setError(message);
+      toast.error(message);
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleOpenChange = (newOpen: boolean) => {
-    if (!newOpen) {
-      setFrontContent("");
-      setBackContent("");
-      setTagInput("");
-      setTags([]);
-      setError(null);
-    }
-    onOpenChange(newOpen);
-  };
-
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="sm:max-w-[475px]">
         <DialogHeader>
-          <DialogTitle>New Card</DialogTitle>
-          <DialogDescription>
-            Add a new flashcard to this deck
-          </DialogDescription>
+          <DialogTitle>Edit Card</DialogTitle>
+          <DialogDescription>Update the card content (and optional tags).</DialogDescription>
         </DialogHeader>
+
         <form onSubmit={handleSubmit}>
-          {error && (
-            <div className="text-sm text-destructive mb-4">{error}</div>
-          )}
+          {error && <div className="text-sm text-destructive mb-4">{error}</div>}
+
           <div className="grid gap-4 py-4">
             <div className="grid gap-2">
-              <Label htmlFor="front-content">Front</Label>
+              <Label htmlFor="edit-front-content">Front</Label>
               <Input
-                id="front-content"
-                placeholder="Question or prompt"
+                id="edit-front-content"
                 value={frontContent}
                 onChange={(e) => setFrontContent(e.target.value)}
                 disabled={isSubmitting}
                 required
               />
             </div>
+
             <div className="grid gap-2">
-              <Label htmlFor="back-content">Back</Label>
+              <Label htmlFor="edit-back-content">Back</Label>
               <Input
-                id="back-content"
-                placeholder="Answer or response"
+                id="edit-back-content"
                 value={backContent}
                 onChange={(e) => setBackContent(e.target.value)}
                 disabled={isSubmitting}
@@ -152,10 +162,10 @@ export function NewCardModal({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="card-tags">Tags</Label>
+              <Label htmlFor="edit-card-tags">Tags</Label>
               <div className="flex gap-2">
                 <Input
-                  id="card-tags"
+                  id="edit-card-tags"
                   value={tagInput}
                   onChange={(e) => setTagInput(e.target.value)}
                   onKeyDown={(e) => {
@@ -198,27 +208,14 @@ export function NewCardModal({
               <p className="text-xs text-muted-foreground">Up to {MAX_TAGS} tags.</p>
             </div>
           </div>
+
           <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleOpenChange(false)}
-              disabled={isSubmitting}
-            >
+            <Button type="button" variant="outline" onClick={() => handleOpenChange(false)} disabled={isSubmitting}>
               Cancel
             </Button>
             <Button type="submit" disabled={isSubmitting} className="gap-2">
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Creating...
-                </>
-              ) : (
-                <>
-                  <Plus className="h-4 w-4" />
-                  Create Card
-                </>
-              )}
+              {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+              Save
             </Button>
           </DialogFooter>
         </form>
