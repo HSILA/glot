@@ -26,6 +26,8 @@ import {
   DECK_COLOR_OPTIONS,
   NewDeckModal,
 } from "@/components/decks/new-deck-modal";
+import { EditDeckModal } from "@/components/decks/edit-deck-modal";
+import { DeleteDeckModal } from "@/components/decks/delete-deck-modal";
 
 type DeckWithStats = Omit<Deck, 'color'> & {
   color: string;
@@ -124,6 +126,8 @@ export default function DecksPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateDeckOpen, setIsCreateDeckOpen] = useState(false);
+  const [deckToEdit, setDeckToEdit] = useState<Deck | null>(null);
+  const [deckToDelete, setDeckToDelete] = useState<Deck | null>(null);
 
   const requestIdRef = useRef(0);
 
@@ -182,8 +186,37 @@ export default function DecksPage() {
     [decks]
   );
 
-  const handleDeckCreated = async () => {
+  const handleDeckCreated = async (deck: Deck) => {
     await loadDecks();
+  };
+
+  const handleDeckUpdated = async (updatedDeck: Deck) => {
+    // Update deck in local state using returned payload
+    setDecks((prev) =>
+      prev.map((d) => (d.id === updatedDeck.id ? { ...d, ...updatedDeck, color: colorForDeck(updatedDeck) } : d))
+    );
+
+    // Background refetch for computed stats (dueCards, newCards, etc.)
+    try {
+      const allCards = await listAllCards();
+      const deckCards = allCards.filter((c) => c.deck_id === updatedDeck.id);
+      const stats = computeDeckStats(deckCards);
+
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === updatedDeck.id
+            ? { ...d, ...stats, totalCards: updatedDeck.cards_count }
+            : d
+        )
+      );
+    } catch (err) {
+      console.error("Failed to refresh deck stats:", err);
+    }
+  };
+
+  const handleDeckDeleted = (deckId: number) => {
+    // Remove deck from local state using returned payload
+    setDecks((prev) => prev.filter((d) => d.id !== deckId));
   };
 
   if (isLoading) {
@@ -300,14 +333,30 @@ export default function DecksPage() {
                           size="icon"
                           className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem disabled>Edit</DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeckToEdit(deck);
+                          }}
+                        >
+                          Edit
+                        </DropdownMenuItem>
                         <DropdownMenuItem disabled>Export</DropdownMenuItem>
-                        <DropdownMenuItem className="text-destructive" disabled>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setDeckToDelete(deck);
+                          }}
+                        >
                           Delete
                         </DropdownMenuItem>
                       </DropdownMenuContent>
@@ -373,6 +422,28 @@ export default function DecksPage() {
         onOpenChange={setIsCreateDeckOpen}
         onCreated={handleDeckCreated}
       />
+
+      {deckToEdit && (
+        <EditDeckModal
+          open={Boolean(deckToEdit)}
+          onOpenChange={(open) => {
+            if (!open) setDeckToEdit(null);
+          }}
+          deck={deckToEdit}
+          onUpdated={(updatedDeck) => void handleDeckUpdated(updatedDeck)}
+        />
+      )}
+
+      {deckToDelete && (
+        <DeleteDeckModal
+          open={Boolean(deckToDelete)}
+          onOpenChange={(open) => {
+            if (!open) setDeckToDelete(null);
+          }}
+          deck={deckToDelete}
+          onDeleted={handleDeckDeleted}
+        />
+      )}
     </div>
   );
 }
