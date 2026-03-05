@@ -186,16 +186,72 @@ export default function DecksPage() {
     [decks]
   );
 
-  const handleDeckCreated = async () => {
+  const handleDeckCreated = async (deck: Deck) => {
     await loadDecks();
   };
 
   const handleDeckUpdated = async () => {
-    await loadDecks();
+    // Background refetch without global spinner for smoother UX
+    try {
+      const [userDecks, allCards] = await Promise.all([listAllDecks(), listAllCards()]);
+
+      const cardsByDeck = new Map<number, FlashCard[]>();
+      for (const card of allCards) {
+        if (card.deck_id === null) continue;
+        const arr = cardsByDeck.get(card.deck_id) ?? [];
+        arr.push(card);
+        cardsByDeck.set(card.deck_id, arr);
+      }
+
+      const decksWithStats = userDecks.map((deck) => {
+        const cards = cardsByDeck.get(deck.id) ?? [];
+        const stats = computeDeckStats(cards);
+
+        return {
+          ...deck,
+          color: colorForDeck(deck),
+          ...stats,
+          totalCards: deck.cards_count,
+        };
+      });
+
+      setDecks(decksWithStats);
+    } catch (err) {
+      // Silently fail - user already saw success toast
+      console.error("Failed to refresh decks:", err);
+    }
   };
 
   const handleDeckDeleted = async () => {
-    await loadDecks();
+    // Background refetch without global spinner for smoother UX
+    try {
+      const [userDecks, allCards] = await Promise.all([listAllDecks(), listAllCards()]);
+
+      const cardsByDeck = new Map<number, FlashCard[]>();
+      for (const card of allCards) {
+        if (card.deck_id === null) continue;
+        const arr = cardsByDeck.get(card.deck_id) ?? [];
+        arr.push(card);
+        cardsByDeck.set(card.deck_id, arr);
+      }
+
+      const decksWithStats = userDecks.map((deck) => {
+        const cards = cardsByDeck.get(deck.id) ?? [];
+        const stats = computeDeckStats(cards);
+
+        return {
+          ...deck,
+          color: colorForDeck(deck),
+          ...stats,
+          totalCards: deck.cards_count,
+        };
+      });
+
+      setDecks(decksWithStats);
+    } catch (err) {
+      // Silently fail - user already saw success toast
+      console.error("Failed to refresh decks:", err);
+    }
   };
 
   if (isLoading) {
@@ -312,6 +368,7 @@ export default function DecksPage() {
                           size="icon"
                           className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
                           onClick={(e) => e.stopPropagation()}
+                          onKeyDown={(e) => e.stopPropagation()}
                         >
                           <MoreHorizontal className="h-4 w-4" />
                         </Button>
