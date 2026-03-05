@@ -190,68 +190,33 @@ export default function DecksPage() {
     await loadDecks();
   };
 
-  const handleDeckUpdated = async () => {
-    // Background refetch without global spinner for smoother UX
+  const handleDeckUpdated = async (updatedDeck: Deck) => {
+    // Update deck in local state using returned payload
+    setDecks((prev) =>
+      prev.map((d) => (d.id === updatedDeck.id ? { ...d, ...updatedDeck, color: colorForDeck(updatedDeck) } : d))
+    );
+
+    // Background refetch for computed stats (dueCards, newCards, etc.)
     try {
-      const [userDecks, allCards] = await Promise.all([listAllDecks(), listAllCards()]);
+      const allCards = await listAllCards();
+      const deckCards = allCards.filter((c) => c.deck_id === updatedDeck.id);
+      const stats = computeDeckStats(deckCards);
 
-      const cardsByDeck = new Map<number, FlashCard[]>();
-      for (const card of allCards) {
-        if (card.deck_id === null) continue;
-        const arr = cardsByDeck.get(card.deck_id) ?? [];
-        arr.push(card);
-        cardsByDeck.set(card.deck_id, arr);
-      }
-
-      const decksWithStats = userDecks.map((deck) => {
-        const cards = cardsByDeck.get(deck.id) ?? [];
-        const stats = computeDeckStats(cards);
-
-        return {
-          ...deck,
-          color: colorForDeck(deck),
-          ...stats,
-          totalCards: deck.cards_count,
-        };
-      });
-
-      setDecks(decksWithStats);
+      setDecks((prev) =>
+        prev.map((d) =>
+          d.id === updatedDeck.id
+            ? { ...d, ...stats, totalCards: updatedDeck.cards_count }
+            : d
+        )
+      );
     } catch (err) {
-      // Silently fail - user already saw success toast
-      console.error("Failed to refresh decks:", err);
+      console.error("Failed to refresh deck stats:", err);
     }
   };
 
-  const handleDeckDeleted = async () => {
-    // Background refetch without global spinner for smoother UX
-    try {
-      const [userDecks, allCards] = await Promise.all([listAllDecks(), listAllCards()]);
-
-      const cardsByDeck = new Map<number, FlashCard[]>();
-      for (const card of allCards) {
-        if (card.deck_id === null) continue;
-        const arr = cardsByDeck.get(card.deck_id) ?? [];
-        arr.push(card);
-        cardsByDeck.set(card.deck_id, arr);
-      }
-
-      const decksWithStats = userDecks.map((deck) => {
-        const cards = cardsByDeck.get(deck.id) ?? [];
-        const stats = computeDeckStats(cards);
-
-        return {
-          ...deck,
-          color: colorForDeck(deck),
-          ...stats,
-          totalCards: deck.cards_count,
-        };
-      });
-
-      setDecks(decksWithStats);
-    } catch (err) {
-      // Silently fail - user already saw success toast
-      console.error("Failed to refresh decks:", err);
-    }
+  const handleDeckDeleted = (deckId: number) => {
+    // Remove deck from local state using returned payload
+    setDecks((prev) => prev.filter((d) => d.id !== deckId));
   };
 
   if (isLoading) {
@@ -465,7 +430,7 @@ export default function DecksPage() {
             if (!open) setDeckToEdit(null);
           }}
           deck={deckToEdit}
-          onUpdated={() => void handleDeckUpdated()}
+          onUpdated={(updatedDeck) => void handleDeckUpdated(updatedDeck)}
         />
       )}
 
@@ -476,7 +441,7 @@ export default function DecksPage() {
             if (!open) setDeckToDelete(null);
           }}
           deck={deckToDelete}
-          onDeleted={() => void handleDeckDeleted()}
+          onDeleted={handleDeckDeleted}
         />
       )}
     </div>
