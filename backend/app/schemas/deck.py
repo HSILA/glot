@@ -62,6 +62,9 @@ class DeckRead(BaseModel):
     color: str | None
     tags: list[str] | None
     cards_count: int = 0
+    new_count: int = 0
+    due_count: int = 0
+    last_studied_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
 
