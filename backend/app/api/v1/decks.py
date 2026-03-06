@@ -163,7 +163,15 @@ async def create_deck(
     session.add(deck)
     await session.flush()
     await session.refresh(deck)
-    return deck
+
+    # Return with stats (all zeros for new deck)
+    return DeckRead.model_validate({
+        **deck.model_dump(),
+        "cards_count": 0,
+        "new_count": 0,
+        "due_count": 0,
+        "last_studied_at": None,
+    })
 
 
 @router.put("/{deck_id}", response_model=DeckRead)
@@ -173,7 +181,7 @@ async def update_deck(
     session: Annotated[AsyncSession, Depends(get_async_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Update an existing deck (owned by current user)."""
+    """Update an existing deck (owned by current user, includes cards_count and stats)."""
     result = await session.execute(
         select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
     )
@@ -188,7 +196,55 @@ async def update_deck(
     deck.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(deck)
-    return deck
+
+    # Compute stats for updated deck
+    now = datetime.now(UTC)
+    stats_subq = (
+        select(
+            Card.deck_id,
+            func.count(Card.id).label("cards_count"),
+            func.sum(case((Card.state == CardState.NEW, 1), else_=0)).label("new_count"),
+            func.sum(
+                case(
+                    (
+                        and_(
+                            Card.state != CardState.NEW,
+                            Card.next_review_at <= now,
+                        ),
+                        1,
+                    ),
+                    else_=0,
+                )
+            ).label("due_count"),
+            func.max(Card.last_review_at).label("last_studied_at"),
+        )
+        .where(Card.deck_id == deck_id)
+        .group_by(Card.deck_id)
+        .subquery()
+    )
+
+    result = await session.execute(
+        select(
+            func.coalesce(stats_subq.c.cards_count, 0).label("cards_count"),
+            func.coalesce(stats_subq.c.new_count, 0).label("new_count"),
+            func.coalesce(stats_subq.c.due_count, 0).label("due_count"),
+            stats_subq.c.last_studied_at,
+        )
+        .select_from(Deck)
+        .outerjoin(stats_subq, stats_subq.c.deck_id == Deck.id)
+        .where(Deck.id == deck_id)
+    )
+
+    row = result.first()
+    cards_count, new_count, due_count, last_studied_at = row
+
+    return DeckRead.model_validate({
+        **deck.model_dump(),
+        "cards_count": int(cards_count),
+        "new_count": int(new_count),
+        "due_count": int(due_count),
+        "last_studied_at": last_studied_at,
+    })
 
 
 @router.delete("/{deck_id}", status_code=204)
