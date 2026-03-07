@@ -186,7 +186,14 @@ export default function DecksPage() {
     [decks]
   );
 
-  const handleDeckCreated = async (deck: Deck) => {
+  const totalNew = useMemo(
+    () => decks.reduce((sum, deck) => sum + deck.new_count, 0),
+    [decks]
+  );
+
+  const totalToday = totalDue + totalNew;
+
+  const handleDeckCreated = async () => {
     await loadDecks();
   };
 
@@ -247,7 +254,13 @@ export default function DecksPage() {
             Decks
           </h1>
           <p className="text-muted-foreground mt-1">
-            {decks.length} decks &middot; {totalDue} cards due today
+            {decks.length} decks &middot; {totalToday} cards to study today
+            {totalToday > 0 && (
+              <>
+                {" "}
+                <span className="text-xs">({totalDue} due, {totalNew} new)</span>
+              </>
+            )}
           </p>
         </div>
         <Button className="gap-2 w-full md:w-auto" onClick={() => setIsCreateDeckOpen(true)}>
@@ -256,7 +269,7 @@ export default function DecksPage() {
         </Button>
       </div>
 
-      {totalDue > 0 && (
+      {totalToday > 0 && (
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">
@@ -266,14 +279,14 @@ export default function DecksPage() {
               <div>
                 <h3 className="font-semibold">Ready to study?</h3>
                 <p className="text-sm text-muted-foreground">
-                  You have {totalDue} cards due across all decks
+                  You have {totalToday} cards to study today ({totalDue} due, {totalNew} new)
                 </p>
               </div>
             </div>
             {/* TODO(session): Wire this to live session filtering once session page reads query params and backend due data. */}
             <Button className="w-full sm:w-auto gap-2" onClick={() => router.push("/session") }>
               <Play className="h-4 w-4" />
-              Study All Due
+              Study Today
             </Button>
           </CardContent>
         </Card>
