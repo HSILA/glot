@@ -13,15 +13,73 @@ from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, case, and_
+from sqlalchemy import and_, case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.dependencies import get_async_session, get_current_user
-from app.models import Card, Deck, User, CardState
+from app.models import Card, CardState, Deck, User
 from app.schemas import DeckCreate, DeckRead, DeckUpdate
 
 router = APIRouter()
+
+
+def _deck_stats_subquery(*, now: datetime, user_id: int | None = None, deck_id: int | None = None):
+    """Return a subquery with per-deck card stats.
+
+    Columns:
+      - deck_id
+      - cards_count
+      - new_count
+      - due_count (scheduled cards only; excludes NEW)
+      - last_studied_at
+    """
+
+    stmt = select(
+        Card.deck_id,
+        func.count(Card.id).label("cards_count"),
+        func.sum(case((Card.state == CardState.NEW, 1), else_=0)).label("new_count"),
+        func.sum(
+            case(
+                (
+                    and_(
+                        Card.state != CardState.NEW,
+                        Card.next_review_at <= now,
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("due_count"),
+        func.max(Card.last_review_at).label("last_studied_at"),
+    )
+
+    if user_id is not None:
+        stmt = stmt.join(Deck, Deck.id == Card.deck_id).where(Deck.user_id == user_id)
+
+    if deck_id is not None:
+        stmt = stmt.where(Card.deck_id == deck_id)
+
+    return stmt.group_by(Card.deck_id).subquery()
+
+
+def _deck_read_with_stats(
+    *,
+    deck: Deck,
+    cards_count: int,
+    new_count: int,
+    due_count: int,
+    last_studied_at: datetime | None,
+) -> DeckRead:
+    return DeckRead.model_validate(
+        {
+            **deck.model_dump(),
+            "cards_count": int(cards_count),
+            "new_count": int(new_count),
+            "due_count": int(due_count),
+            "last_studied_at": last_studied_at,
+        }
+    )
 
 
 @router.get("", response_model=list[DeckRead])
@@ -32,33 +90,9 @@ async def list_decks(
     offset: int = Query(0, ge=0),
 ):
     """List all decks owned by the current user (includes cards_count and stats)."""
-    now = datetime.now(UTC)
 
-    # Subquery to compute all card stats per deck in a single pass
-    stats_subq = (
-        select(
-            Card.deck_id,
-            func.count(Card.id).label("cards_count"),
-            func.sum(case((Card.state == CardState.NEW, 1), else_=0)).label("new_count"),
-            func.sum(
-                case(
-                    (
-                        and_(
-                            Card.state != CardState.NEW,
-                            Card.next_review_at <= now,
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("due_count"),
-            func.max(Card.last_review_at).label("last_studied_at"),
-        )
-        .join(Deck, Deck.id == Card.deck_id)
-        .where(Deck.user_id == current_user.id)
-        .group_by(Card.deck_id)
-        .subquery()
-    )
+    now = datetime.now(UTC)
+    stats_subq = _deck_stats_subquery(now=now, user_id=current_user.id)
 
     query = (
         select(
@@ -78,13 +112,13 @@ async def list_decks(
     rows = result.all()
 
     return [
-        DeckRead.model_validate({
-            **deck.model_dump(),
-            "cards_count": int(cards_count),
-            "new_count": int(new_count),
-            "due_count": int(due_count),
-            "last_studied_at": last_studied_at,
-        })
+        _deck_read_with_stats(
+            deck=deck,
+            cards_count=cards_count,
+            new_count=new_count,
+            due_count=due_count,
+            last_studied_at=last_studied_at,
+        )
         for deck, cards_count, new_count, due_count, last_studied_at in rows
     ]
 
@@ -96,32 +130,9 @@ async def get_deck(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Get a single deck by ID (owned by current user, includes cards_count and stats)."""
-    now = datetime.now(UTC)
 
-    # Subquery to compute all card stats for this deck
-    stats_subq = (
-        select(
-            Card.deck_id,
-            func.count(Card.id).label("cards_count"),
-            func.sum(case((Card.state == CardState.NEW, 1), else_=0)).label("new_count"),
-            func.sum(
-                case(
-                    (
-                        and_(
-                            Card.state != CardState.NEW,
-                            Card.next_review_at <= now,
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("due_count"),
-            func.max(Card.last_review_at).label("last_studied_at"),
-        )
-        .where(Card.deck_id == deck_id)
-        .group_by(Card.deck_id)
-        .subquery()
-    )
+    now = datetime.now(UTC)
+    stats_subq = _deck_stats_subquery(now=now, deck_id=deck_id)
 
     result = await session.execute(
         select(
@@ -140,13 +151,13 @@ async def get_deck(
         raise HTTPException(status_code=404, detail="Deck not found")
 
     deck, cards_count, new_count, due_count, last_studied_at = row
-    return DeckRead.model_validate({
-        **deck.model_dump(),
-        "cards_count": int(cards_count),
-        "new_count": int(new_count),
-        "due_count": int(due_count),
-        "last_studied_at": last_studied_at,
-    })
+    return _deck_read_with_stats(
+        deck=deck,
+        cards_count=cards_count,
+        new_count=new_count,
+        due_count=due_count,
+        last_studied_at=last_studied_at,
+    )
 
 
 @router.post("", response_model=DeckRead, status_code=201)
@@ -156,6 +167,7 @@ async def create_deck(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Create a new deck owned by the current user."""
+
     deck = Deck(
         user_id=current_user.id,
         **deck_data.model_dump(),
@@ -165,13 +177,13 @@ async def create_deck(
     await session.refresh(deck)
 
     # Return with stats (all zeros for new deck)
-    return DeckRead.model_validate({
-        **deck.model_dump(),
-        "cards_count": 0,
-        "new_count": 0,
-        "due_count": 0,
-        "last_studied_at": None,
-    })
+    return _deck_read_with_stats(
+        deck=deck,
+        cards_count=0,
+        new_count=0,
+        due_count=0,
+        last_studied_at=None,
+    )
 
 
 @router.put("/{deck_id}", response_model=DeckRead)
@@ -182,6 +194,7 @@ async def update_deck(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Update an existing deck (owned by current user, includes cards_count and stats)."""
+
     result = await session.execute(
         select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
     )
@@ -197,31 +210,8 @@ async def update_deck(
     await session.flush()
     await session.refresh(deck)
 
-    # Compute stats for updated deck
     now = datetime.now(UTC)
-    stats_subq = (
-        select(
-            Card.deck_id,
-            func.count(Card.id).label("cards_count"),
-            func.sum(case((Card.state == CardState.NEW, 1), else_=0)).label("new_count"),
-            func.sum(
-                case(
-                    (
-                        and_(
-                            Card.state != CardState.NEW,
-                            Card.next_review_at <= now,
-                        ),
-                        1,
-                    ),
-                    else_=0,
-                )
-            ).label("due_count"),
-            func.max(Card.last_review_at).label("last_studied_at"),
-        )
-        .where(Card.deck_id == deck_id)
-        .group_by(Card.deck_id)
-        .subquery()
-    )
+    stats_subq = _deck_stats_subquery(now=now, deck_id=deck_id)
 
     result = await session.execute(
         select(
@@ -238,13 +228,13 @@ async def update_deck(
     row = result.first()
     cards_count, new_count, due_count, last_studied_at = row
 
-    return DeckRead.model_validate({
-        **deck.model_dump(),
-        "cards_count": int(cards_count),
-        "new_count": int(new_count),
-        "due_count": int(due_count),
-        "last_studied_at": last_studied_at,
-    })
+    return _deck_read_with_stats(
+        deck=deck,
+        cards_count=cards_count,
+        new_count=new_count,
+        due_count=due_count,
+        last_studied_at=last_studied_at,
+    )
 
 
 @router.delete("/{deck_id}", status_code=204)
@@ -253,11 +243,11 @@ async def delete_deck(
     session: Annotated[AsyncSession, Depends(get_async_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """
-    Delete a deck.
+    """Delete a deck.
 
     Note: Cards in this deck will have their deck_id set to null.
     """
+
     result = await session.execute(
         select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
     )
