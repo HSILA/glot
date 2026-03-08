@@ -7,6 +7,9 @@ export interface Deck {
   color: string | null;
   tags: string[] | null;
   cards_count: number;
+  new_count: number;
+  due_count: number;
+  last_studied_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -50,6 +53,11 @@ function assertDeck(value: unknown, context = "Deck"): asserts value is Deck {
     throw new Error(`${context}: invalid tags`);
   }
   if (typeof value.cards_count !== "number") throw new Error(`${context}: invalid cards_count`);
+  if (typeof value.new_count !== "number") throw new Error(`${context}: invalid new_count`);
+  if (typeof value.due_count !== "number") throw new Error(`${context}: invalid due_count`);
+  if (!(value.last_studied_at === null || typeof value.last_studied_at === "string")) {
+    throw new Error(`${context}: invalid last_studied_at`);
+  }
   if (typeof value.created_at !== "string") throw new Error(`${context}: invalid created_at`);
   if (typeof value.updated_at !== "string") throw new Error(`${context}: invalid updated_at`);
 }

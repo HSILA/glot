@@ -21,7 +21,6 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { decksApi, type Deck } from "@/lib/api/decks";
-import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
 import {
   DECK_COLOR_OPTIONS,
   NewDeckModal,
@@ -31,16 +30,12 @@ import { DeleteDeckModal } from "@/components/decks/delete-deck-modal";
 
 type DeckWithStats = Omit<Deck, 'color'> & {
   color: string;
-  totalCards: number;
-  newCards: number;
-  dueCards: number;
-  lastStudied: string;
 };
 
-function formatLastStudied(lastReviewedAt: string | null): string {
-  if (!lastReviewedAt) return "Never";
+function formatLastStudied(lastStudiedAt: string | null): string {
+  if (!lastStudiedAt) return "Never";
 
-  const ts = new Date(lastReviewedAt).getTime();
+  const ts = new Date(lastStudiedAt).getTime();
   if (Number.isNaN(ts)) return "Unknown";
 
   const days = Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
@@ -53,32 +48,6 @@ function formatLastStudied(lastReviewedAt: string | null): string {
 function colorForDeck(deck: Deck): string {
   if (deck.color) return deck.color;
   return DECK_COLOR_OPTIONS[(deck.id - 1) % DECK_COLOR_OPTIONS.length];
-}
-
-function computeDeckStats(cards: FlashCard[]) {
-  const now = Date.now();
-  let lastReviewAt: string | null = null;
-
-  const dueCards = cards.filter((card) => {
-    if (card.state === "new") return true;
-    if (!card.next_review_at) return false;
-    const nextTs = new Date(card.next_review_at).getTime();
-    return !Number.isNaN(nextTs) && nextTs <= now;
-  }).length;
-
-  for (const card of cards) {
-    if (!card.last_review_at) continue;
-    if (!lastReviewAt || new Date(card.last_review_at) > new Date(lastReviewAt)) {
-      lastReviewAt = card.last_review_at;
-    }
-  }
-
-  return {
-    totalCards: cards.length,
-    newCards: cards.filter((card) => card.state === "new").length,
-    dueCards,
-    lastStudied: formatLastStudied(lastReviewAt),
-  };
 }
 
 async function listAllDecks(): Promise<Deck[]> {
@@ -100,25 +69,6 @@ async function listAllDecks(): Promise<Deck[]> {
   return allDecks;
 }
 
-async function listAllCards(): Promise<FlashCard[]> {
-  const allCards: FlashCard[] = [];
-  const limit = 200;
-  let offset = 0;
-
-  while (true) {
-    const page = await cardsApi.listCards({ limit, offset });
-    allCards.push(...page.items);
-
-    if (page.offset + page.items.length >= page.total) {
-      break;
-    }
-
-    offset += page.items.length;
-  }
-
-  return allCards;
-}
-
 export default function DecksPage() {
   const router = useRouter();
 
@@ -138,28 +88,12 @@ export default function DecksPage() {
     setError(null);
 
     try {
-      const [userDecks, allCards] = await Promise.all([listAllDecks(), listAllCards()]);
+      const userDecks = await listAllDecks();
 
-      const cardsByDeck = new Map<number, FlashCard[]>();
-      for (const card of allCards) {
-        if (card.deck_id === null) continue;
-        const arr = cardsByDeck.get(card.deck_id) ?? [];
-        arr.push(card);
-        cardsByDeck.set(card.deck_id, arr);
-      }
-
-      const decksWithStats = userDecks.map((deck) => {
-        const cards = cardsByDeck.get(deck.id) ?? [];
-        const stats = computeDeckStats(cards);
-
-        return {
-          ...deck,
-          color: colorForDeck(deck),
-          ...stats,
-          // Use backend-provided count for "total" wherever possible.
-          totalCards: deck.cards_count,
-        };
-      });
+      const decksWithStats = userDecks.map((deck) => ({
+        ...deck,
+        color: colorForDeck(deck),
+      }));
 
       if (requestId !== requestIdRef.current) return;
       setDecks(decksWithStats);
@@ -182,40 +116,28 @@ export default function DecksPage() {
   }, [loadDecks]);
 
   const totalDue = useMemo(
-    () => decks.reduce((sum, deck) => sum + deck.dueCards, 0),
+    () => decks.reduce((sum, deck) => sum + deck.due_count, 0),
     [decks]
   );
 
-  const handleDeckCreated = async (deck: Deck) => {
+  const totalNew = useMemo(
+    () => decks.reduce((sum, deck) => sum + deck.new_count, 0),
+    [decks]
+  );
+
+  const totalToday = totalDue + totalNew;
+
+  const handleDeckCreated = async () => {
     await loadDecks();
   };
 
   const handleDeckUpdated = async (updatedDeck: Deck) => {
-    // Update deck in local state using returned payload
     setDecks((prev) =>
       prev.map((d) => (d.id === updatedDeck.id ? { ...d, ...updatedDeck, color: colorForDeck(updatedDeck) } : d))
     );
-
-    // Background refetch for computed stats (dueCards, newCards, etc.)
-    try {
-      const allCards = await listAllCards();
-      const deckCards = allCards.filter((c) => c.deck_id === updatedDeck.id);
-      const stats = computeDeckStats(deckCards);
-
-      setDecks((prev) =>
-        prev.map((d) =>
-          d.id === updatedDeck.id
-            ? { ...d, ...stats, totalCards: updatedDeck.cards_count }
-            : d
-        )
-      );
-    } catch (err) {
-      console.error("Failed to refresh deck stats:", err);
-    }
   };
 
   const handleDeckDeleted = (deckId: number) => {
-    // Remove deck from local state using returned payload
     setDecks((prev) => prev.filter((d) => d.id !== deckId));
   };
 
@@ -247,7 +169,13 @@ export default function DecksPage() {
             Decks
           </h1>
           <p className="text-muted-foreground mt-1">
-            {decks.length} decks &middot; {totalDue} cards due today
+            {decks.length} decks &middot; {totalToday} cards to study today
+            {totalToday > 0 && (
+              <>
+                {" "}
+                <span className="text-xs">({totalDue} due, {totalNew} new)</span>
+              </>
+            )}
           </p>
         </div>
         <Button className="gap-2 w-full md:w-auto" onClick={() => setIsCreateDeckOpen(true)}>
@@ -256,7 +184,7 @@ export default function DecksPage() {
         </Button>
       </div>
 
-      {totalDue > 0 && (
+      {totalToday > 0 && (
         <Card className="border-primary/30 bg-primary/5">
           <CardContent className="p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
             <div className="flex items-center gap-4">
@@ -266,14 +194,13 @@ export default function DecksPage() {
               <div>
                 <h3 className="font-semibold">Ready to study?</h3>
                 <p className="text-sm text-muted-foreground">
-                  You have {totalDue} cards due across all decks
+                  You have {totalToday} cards to study today ({totalDue} due, {totalNew} new)
                 </p>
               </div>
             </div>
-            {/* TODO(session): Wire this to live session filtering once session page reads query params and backend due data. */}
             <Button className="w-full sm:w-auto gap-2" onClick={() => router.push("/session") }>
               <Play className="h-4 w-4" />
-              Study All Due
+              Study Today
             </Button>
           </CardContent>
         </Card>
@@ -380,22 +307,22 @@ export default function DecksPage() {
                       variant="secondary"
                       className="text-xs bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400"
                     >
-                      {deck.newCards} new
+                      {deck.new_count} new
                     </Badge>
                     <Badge
                       variant="secondary"
                       className="text-xs bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400"
                     >
-                      {deck.dueCards} due
+                      {deck.due_count} due
                     </Badge>
                     <span className="text-xs text-muted-foreground ml-auto">
-                      {deck.totalCards} total
+                      {deck.cards_count} total
                     </span>
                   </div>
 
                   <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
                     <span className="text-xs text-muted-foreground">
-                      Last studied: {deck.lastStudied}
+                      Last studied: {formatLastStudied(deck.last_studied_at)}
                     </span>
                     <Button
                       variant="ghost"
