@@ -37,6 +37,7 @@ export default function LibraryPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isUploadOpen, setIsUploadOpen] = useState(false);
+  const [isTabVisible, setIsTabVisible] = useState(true);
   const [extractionProgress, setExtractionProgress] = useState<
     Record<number, number>
   >({});
@@ -89,8 +90,23 @@ export default function LibraryPage() {
     }
   }, [activeTab, fetchMyResources, fetchPublicResources]);
 
+  useEffect(() => {
+    const updateVisibility = () => {
+      setIsTabVisible(document.visibilityState === "visible");
+    };
+
+    updateVisibility();
+    document.addEventListener("visibilitychange", updateVisibility);
+
+    return () => {
+      document.removeEventListener("visibilitychange", updateVisibility);
+    };
+  }, []);
+
   // Poll for extraction progress
   useEffect(() => {
+    if (activeTab !== "my" || !isTabVisible) return;
+
     const processingResources = myResources.filter(
       (r) =>
         r.extraction_status === "pending" || r.extraction_status === "processing"
@@ -117,10 +133,10 @@ export default function LibraryPage() {
           // Ignore errors
         }
       }
-    }, 2000);
+    }, 5000);
 
     return () => clearInterval(interval);
-  }, [myResources, fetchMyResources]);
+  }, [activeTab, isTabVisible, myResources, fetchMyResources]);
 
   const handleExtract = async (id: number) => {
     try {

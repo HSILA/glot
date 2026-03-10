@@ -688,4 +688,4 @@ class WorkerSettings:
     job_timeout = 1200
     keep_result = 0
     health_check_interval = 600
-    poll_delay = 5
+    poll_delay = get_settings().extraction_worker_poll_delay_seconds
