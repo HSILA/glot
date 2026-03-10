@@ -57,6 +57,7 @@ class Settings(BaseSettings):
     # Extraction Agent
     openrouter_api_key: str
     extraction_agent_model: str = "qwen/qwen-3-vl-235b-a22b-instruct"
+    extraction_worker_poll_delay_seconds: float = 15.0
 
 
 # Rate limiting
