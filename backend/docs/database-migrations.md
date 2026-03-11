@@ -25,10 +25,12 @@ uv run alembic upgrade head
 
 The startup script detects this case:
 - if app tables exist but `alembic_version` does not,
-- it stamps baseline revision `0001_baseline`,
+- it runs compatibility checks (required tables/columns and key card sequence uniqueness),
+- only if compatible, it stamps baseline revision `0001_baseline`,
 - then runs `alembic upgrade head`.
 
-This allows migration adoption without dropping data.
+If compatibility checks fail, startup exits and requires manual migration intervention.
+This avoids falsely marking partial/legacy schemas as fully migrated.
 
 ## Failure behavior
 
