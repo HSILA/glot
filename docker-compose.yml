@@ -68,6 +68,12 @@ services:
       # Uncomment redis dependency if using local Redis
       # redis:
       #   condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
 
   frontend:
     build:
@@ -103,6 +109,8 @@ services:
       # For cloud Redis (e.g., Upstash): set REDIS_URL in .env file
     depends_on:
       postgres:
+        condition: service_healthy
+      backend:
         condition: service_healthy
       # Uncomment redis dependency if using local Redis
       # redis:

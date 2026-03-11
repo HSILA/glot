@@ -37,16 +37,34 @@ Standard connection string, no special config needed.
 
 ## Tables
 
-Created automatically on app startup via SQLModel.
+Managed via Alembic migrations.
 
 | Table | Purpose |
 |-------|---------|
 | `cards` | Flashcards with FSRS scheduling |
 | `review_logs` | Review history for optimizer |
 | `decks` | Card organization |
-| `app_settings` | Global FSRS config |
+| `user_settings` | Per-user FSRS config |
 
 ## Migrations
 
-- Currently: Auto-creation (dev only) 
-- Future: Alembic (not yet configured)
+Alembic is the canonical schema management tool.
+
+### Common commands
+
+```bash
+# Apply pending migrations
+uv run alembic upgrade head
+
+# Create a new migration from model changes
+uv run alembic revision --autogenerate -m "describe change"
+
+# Roll back one revision
+uv run alembic downgrade -1
+```
+
+### Startup behavior
+
+- Docker backend startup command runs `alembic upgrade head` before `uvicorn`
+- Local `just dev-backend` also runs migrations before API start
+- If migration fails, backend startup fails (expected/safe behavior)

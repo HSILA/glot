@@ -45,9 +45,9 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Glot API...")
     logger.info(f"Debug mode: {settings.debug}")
-    logger.info("Initializing database...")
+    logger.info("Checking database connectivity...")
     await init_db()
-    logger.success("Database initialized successfully")
+    logger.success("Database connectivity verified")
 
     # NOTE: ARQ worker runs as a separate process for non-blocking extraction
     # Start it with: uv run arq app.workers.extraction_worker.WorkerSettings
