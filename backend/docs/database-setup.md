@@ -65,6 +65,6 @@ uv run alembic downgrade -1
 
 ### Startup behavior
 
-- Docker backend startup script runs `alembic upgrade head` before `uvicorn`
+- Docker backend startup command runs `alembic upgrade head` before `uvicorn`
 - Local `just dev-backend` also runs migrations before API start
 - If migration fails, backend startup fails (expected/safe behavior)

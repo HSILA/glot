@@ -23,7 +23,7 @@ uv run alembic upgrade head
 
 ## Existing environments without Alembic history
 
-The startup script detects this case:
+At backend startup, bootstrap checks detect this case:
 - if app tables exist but `alembic_version` does not,
 - it runs compatibility checks (required tables/columns and key card sequence uniqueness),
 - only if compatible, it stamps baseline revision `0001_baseline`,
