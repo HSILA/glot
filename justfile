@@ -15,8 +15,9 @@ install:
     cd frontend && bun install
 
 # Start backend in dev mode (requires db-up first)
+# Applies migrations before starting the API.
 dev-backend:
-    cd backend && uv run uvicorn app.main:app --reload --host 0.0.0.0
+    cd backend && uv run alembic upgrade head && uv run uvicorn app.main:app --reload --host 0.0.0.0
 
 # Start frontend in dev mode
 dev-frontend:

@@ -12,17 +12,21 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 # Set working directory
 WORKDIR /app
 
-# Copy dependency files first (for better caching)
-COPY pyproject.toml uv.lock README.md ./
+# Copy dependency and migration config first (for better caching)
+COPY pyproject.toml uv.lock README.md alembic.ini ./
 
 # Install dependencies
 RUN uv sync --frozen --no-dev
 
-# Copy application code
+# Copy application, migrations, and startup scripts
 COPY app ./app
+COPY alembic ./alembic
+COPY scripts ./scripts
+
+RUN chmod +x ./scripts/start-backend.sh ./scripts/alembic_bootstrap.py
 
 # Expose port
 EXPOSE 8000
 
-# Run the application
-CMD ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Run migrations, then start API
+CMD ["./scripts/start-backend.sh"]
