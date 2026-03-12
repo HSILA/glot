@@ -31,3 +31,12 @@ def test_settings_reject_blank_jwt_secret(monkeypatch):
 
     with pytest.raises(ValidationError, match="JWT_SECRET must not be blank"):
         Settings(_env_file=None)
+
+
+def test_settings_accept_valid_jwt_secret(monkeypatch):
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("JWT_SECRET", "super-secret-test-value")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.jwt_secret == "super-secret-test-value"
