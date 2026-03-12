@@ -4,6 +4,7 @@ Core configuration and settings for the Glot backend.
 
 from functools import lru_cache
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -32,7 +33,7 @@ class Settings(BaseSettings):
     enable_fuzz: bool = True
 
     # Authentication
-    jwt_secret: str = "CHANGE-ME-IN-PRODUCTION-USE-STRONG-SECRET"
+    jwt_secret: str
     jwt_algorithm: str = "HS256"
     access_token_expire_minutes: int = 30
     refresh_token_expire_days: int = 14
@@ -58,6 +59,14 @@ class Settings(BaseSettings):
     openrouter_api_key: str
     extraction_agent_model: str = "qwen/qwen-3-vl-235b-a22b-instruct"
     extraction_worker_poll_delay_seconds: float = 15.0
+
+    @field_validator("jwt_secret")
+    @classmethod
+    def validate_jwt_secret(cls, value: str) -> str:
+        """Require a non-empty JWT secret."""
+        if not value.strip():
+            raise ValueError("JWT_SECRET must not be blank")
+        return value
 
 
 # Rate limiting
