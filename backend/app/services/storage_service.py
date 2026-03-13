@@ -9,12 +9,19 @@ Provides S3-compatible operations for:
 """
 
 import hashlib
+import re
+import unicodedata
 from typing import BinaryIO
 
 import boto3
 from botocore.config import Config
 
 from app.core import Settings
+
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x1f\x7f]+")
+_FILENAME_UNSAFE_CHARS_RE = re.compile(r'[^A-Za-z0-9._() \-]+')
+_FILENAME_REPEAT_UNDERSCORE_RE = re.compile(r"_{2,}")
+_FILENAME_REPEAT_SPACE_RE = re.compile(r" {2,}")
 
 
 class StorageService:
@@ -38,6 +45,16 @@ class StorageService:
     @property
     def bucket_name(self) -> str:
         return self._bucket_name
+
+    @staticmethod
+    def _sanitize_download_filename(filename: str) -> str:
+        normalized = unicodedata.normalize("NFKD", filename)
+        ascii_filename = normalized.encode("ascii", "ignore").decode("ascii")
+        without_controls = _CONTROL_CHARS_RE.sub("_", ascii_filename)
+        sanitized = _FILENAME_UNSAFE_CHARS_RE.sub("_", without_controls)
+        sanitized = _FILENAME_REPEAT_UNDERSCORE_RE.sub("_", sanitized)
+        sanitized = _FILENAME_REPEAT_SPACE_RE.sub(" ", sanitized).strip(" ._")
+        return sanitized or "download"
 
     def generate_upload_url(
         self,
@@ -100,7 +117,10 @@ class StorageService:
             "Key": key,
         }
         if filename:
-            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+            safe_filename = self._sanitize_download_filename(filename)
+            params["ResponseContentDisposition"] = (
+                f'attachment; filename="{safe_filename}"'
+            )
         if response_content_type:
             params["ResponseContentType"] = response_content_type
 
