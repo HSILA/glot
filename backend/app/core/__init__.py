@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     database_url_sync: str = (
         "postgresql+psycopg2://postgres:postgres@localhost:5432/glot"
     )
+    database_pool_pre_ping: bool = True
+    database_pool_recycle: int = 1800
+    database_pool_size: int = 10
+    database_max_overflow: int = 20
+    database_pool_timeout: float = 30.0
+    database_use_null_pool: bool = False
 
     # Scheduling (global defaults)
     maximum_interval_days: int = 365

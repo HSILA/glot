@@ -40,3 +40,37 @@ def test_settings_accept_valid_jwt_secret(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.jwt_secret == "super-secret-test-value"
+
+
+def test_database_pool_settings_defaults(monkeypatch):
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("JWT_SECRET", "super-secret-test-value")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.database_pool_pre_ping is True
+    assert settings.database_pool_recycle == 1800
+    assert settings.database_pool_size == 10
+    assert settings.database_max_overflow == 20
+    assert settings.database_pool_timeout == 30.0
+    assert settings.database_use_null_pool is False
+
+
+def test_database_pool_settings_env_overrides(monkeypatch):
+    _set_required_env(monkeypatch)
+    monkeypatch.setenv("JWT_SECRET", "super-secret-test-value")
+    monkeypatch.setenv("DATABASE_POOL_PRE_PING", "false")
+    monkeypatch.setenv("DATABASE_POOL_RECYCLE", "600")
+    monkeypatch.setenv("DATABASE_POOL_SIZE", "6")
+    monkeypatch.setenv("DATABASE_MAX_OVERFLOW", "12")
+    monkeypatch.setenv("DATABASE_POOL_TIMEOUT", "9.5")
+    monkeypatch.setenv("DATABASE_USE_NULL_POOL", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.database_pool_pre_ping is False
+    assert settings.database_pool_recycle == 600
+    assert settings.database_pool_size == 6
+    assert settings.database_max_overflow == 12
+    assert settings.database_pool_timeout == 9.5
+    assert settings.database_use_null_pool is True
