@@ -594,15 +594,15 @@ async def get_download_url(
         )
 
     # Generate presigned download URL
-    name = user_resource.name if user_resource else resource.file_name
+    # Security decision: use deterministic hash-based filename for downloads.
+    download_filename = f"{resource.content_hash}.pdf"
     url = storage.generate_download_url(
         resource.content_hash,
         folder="raw",
-        filename=f"{name}.pdf",
         expires_in=3600,
     )
 
-    return {"url": url, "filename": f"{name}.pdf"}
+    return {"url": url, "filename": download_filename}
 
 
 @router.get("/{resource_id}/thumbnail")
