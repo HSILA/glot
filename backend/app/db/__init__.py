@@ -45,9 +45,7 @@ def build_async_engine_config() -> dict:
         parsed = urlparse(settings.database_url)
         query_params = parse_qs(parsed.query)
         if "neon.tech" in (parsed.hostname or "").lower() and "pgbouncer" not in query_params:
-            config["connect_args"] = {
-                "server_settings": {"statement_cache_size": "0"}
-            }
+            config["connect_args"] = {"prepared_statement_cache_size": 0}
         return config
 
     config.update(
