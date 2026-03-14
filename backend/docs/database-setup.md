@@ -21,15 +21,25 @@ Use port **5432** (direct connection), not 6543.
 DATABASE_URL="postgresql+asyncpg://user:password@ep-xxx.neon.tech:5432/neondb?sslmode=require"
 ```
 
-Requires this config in `app/db/__init__.py`:
-```python
-from sqlalchemy.pool import NullPool
+If you use Neon pooled endpoints (`...-pooler...`), the backend auto-detects this and switches to `NullPool`.
 
-async_engine = create_async_engine(
-    settings.database_url,
-    poolclass=NullPool,
-    connect_args={"server_settings": {"statement_cache_size": "0"}},
-)
+### Pool tuning knobs (non-pooler/direct DB mode)
+
+For direct database connections (no external pooler), SQLAlchemy pooling is explicitly tuned and configurable via env vars:
+
+```env
+DATABASE_POOL_PRE_PING=true
+DATABASE_POOL_RECYCLE=1800
+DATABASE_POOL_SIZE=10
+DATABASE_MAX_OVERFLOW=20
+DATABASE_POOL_TIMEOUT=30
+```
+
+For external poolers (e.g., Supabase pooler URLs, Neon pooler URLs, port `6543`), backend auto-switches to `NullPool`.
+You can also force this behavior with:
+
+```env
+DATABASE_USE_NULL_POOL=true
 ```
 
 ### Railway / Render
