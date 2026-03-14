@@ -89,6 +89,48 @@ async def _safe_cleanup_temp_folder(storage: StorageService, content_hash: str) 
         logger.warning(f"Failed to clean temp folder for {content_hash}: {e}")
 
 
+def _get_or_init_worker_settings(ctx: dict):
+    """Get cached settings from worker ctx, initializing if needed."""
+    settings = ctx.get("settings")
+    if settings is None:
+        settings = get_settings()
+        ctx["settings"] = settings
+    return settings
+
+
+def _get_or_init_storage(ctx: dict) -> StorageService:
+    """Get cached storage service from worker ctx, initializing if needed."""
+    storage = ctx.get("storage")
+    if storage is None:
+        storage = StorageService(_get_or_init_worker_settings(ctx))
+        ctx["storage"] = storage
+    return storage
+
+
+async def _get_or_init_redis(ctx: dict) -> RedisService:
+    """Get cached Redis service from worker ctx, initializing if needed."""
+    redis = ctx.get("redis")
+    if redis is None:
+        settings = _get_or_init_worker_settings(ctx)
+        redis = RedisService(settings.redis_url)
+        await redis.connect()
+        ctx["redis"] = redis
+    return redis
+
+
+def _get_or_init_extraction_agent(ctx: dict) -> ExtractionAgent:
+    """Get cached extraction agent from worker ctx, initializing if needed."""
+    agent = ctx.get("extraction_agent")
+    if agent is None:
+        settings = _get_or_init_worker_settings(ctx)
+        agent = ExtractionAgent(
+            api_key=settings.openrouter_api_key,
+            model_id=settings.extraction_agent_model,
+        )
+        ctx["extraction_agent"] = agent
+    return agent
+
+
 async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
     """
     Prepare a resource for page-by-page extraction.
@@ -99,10 +141,8 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
     - Ensures missing temp page images are rendered
     - Queues only incomplete pages
     """
-    settings = get_settings()
-    storage = StorageService(settings)
-    redis = RedisService(settings.redis_url)
-    await redis.connect()
+    storage = _get_or_init_storage(ctx)
+    redis = await _get_or_init_redis(ctx)
 
     logger.info(f"Preparing extraction for resource {resource_id}")
 
@@ -264,7 +304,6 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
                     doc.close()
                 except Exception as e:
                     logger.warning(f"Failed to close PDF document for resource {resource_id}: {e}")
-            await redis.close()
 
 
 async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
@@ -273,10 +312,8 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
 
     This is atomic and retryable. On failure, increments attempt count.
     """
-    settings = get_settings()
-    storage = StorageService(settings)
-    redis = RedisService(settings.redis_url)
-    await redis.connect()
+    storage = _get_or_init_storage(ctx)
+    redis = await _get_or_init_redis(ctx)
 
     logger.info(f"Extracting page {page_number} for resource {resource_id}")
 
@@ -358,10 +395,7 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
                     await session.commit()
                     return {"success": False, "error": str(render_error)}
 
-            agent = ExtractionAgent(
-                api_key=settings.openrouter_api_key,
-                model_id=settings.extraction_agent_model,
-            )
+            agent = _get_or_init_extraction_agent(ctx)
             result = agent.extract_page(png_bytes, page_number)
 
             if result.success:
@@ -416,8 +450,6 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
                 await session.commit()
 
             return {"success": False, "error": str(e)}
-        finally:
-            await redis.close()
 
 
 async def _update_resource_progress(
@@ -474,9 +506,7 @@ async def check_stale_extractions(ctx: dict):
     - Status is PROCESSING
     - Started more than 5 minutes ago
     """
-    settings = get_settings()
-    redis = RedisService(settings.redis_url)
-    await redis.connect()
+    redis = await _get_or_init_redis(ctx)
 
     stale_threshold = utc_now() - timedelta(minutes=5)
 
@@ -520,8 +550,6 @@ async def check_stale_extractions(ctx: dict):
         except Exception as e:
             logger.exception(f"Error checking stale extractions: {e}")
             return {"error": str(e)}
-        finally:
-            await redis.close()
 
 
 async def check_orphan_resources(ctx: dict):
@@ -531,10 +559,8 @@ async def check_orphan_resources(ctx: dict):
     This can happen if a worker crashes between updating page statuses
     and updating the parent resource status.
     """
-    settings = get_settings()
-    redis = RedisService(settings.redis_url)
-    await redis.connect()
-    storage = StorageService(settings)
+    redis = await _get_or_init_redis(ctx)
+    storage = _get_or_init_storage(ctx)
 
     logger.info("Checking for orphan resources...")
 
@@ -590,8 +616,6 @@ async def check_orphan_resources(ctx: dict):
         except Exception as e:
             logger.exception(f"Error checking orphan resources: {e}")
             return {"error": str(e)}
-        finally:
-            await redis.close()
 
 
 async def recover_incomplete_extractions(ctx: dict):
@@ -603,9 +627,7 @@ async def recover_incomplete_extractions(ctx: dict):
     - Missing page_extractions rows for page_count
     - Any page row not COMPLETED
     """
-    settings = get_settings()
-    redis = RedisService(settings.redis_url)
-    await redis.connect()
+    redis = await _get_or_init_redis(ctx)
 
     logger.info("Recovering incomplete extractions...")
 
@@ -665,12 +687,17 @@ async def recover_incomplete_extractions(ctx: dict):
         except Exception as e:
             logger.exception(f"Error recovering incomplete extractions: {e}")
             return {"error": str(e)}
-        finally:
-            await redis.close()
 
 
 async def on_worker_startup(ctx: dict):
-    """Run recovery checks immediately when worker starts."""
+    """Initialize shared worker services and run recovery checks."""
+    logger.info("Worker startup: initializing shared services...")
+
+    _get_or_init_worker_settings(ctx)
+    await _get_or_init_redis(ctx)
+    _get_or_init_storage(ctx)
+    _get_or_init_extraction_agent(ctx)
+
     logger.info("Worker startup: running recovery checks...")
 
     stale_result = await check_stale_extractions(ctx)
@@ -685,6 +712,20 @@ async def on_worker_startup(ctx: dict):
     logger.info("Worker startup recovery complete")
 
 
+async def on_worker_shutdown(ctx: dict):
+    """Close shared worker resources."""
+    redis = ctx.get("redis")
+    if redis is not None:
+        try:
+            await redis.close()
+        finally:
+            ctx.pop("redis", None)
+
+    ctx.pop("extraction_agent", None)
+    ctx.pop("storage", None)
+    ctx.pop("settings", None)
+
+
 def _get_worker_redis_settings():
     """Get Redis settings for worker initialization."""
     settings = get_settings()
@@ -697,6 +738,7 @@ class WorkerSettings:
 
     functions = [prepare_extraction, extract_page]
     on_startup = on_worker_startup
+    on_shutdown = on_worker_shutdown
     cron_jobs = [
         cron(check_stale_extractions, minute={0, 15, 30, 45}),
         cron(check_orphan_resources, minute={5, 20, 35, 50}),
