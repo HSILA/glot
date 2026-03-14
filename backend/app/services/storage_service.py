@@ -71,7 +71,6 @@ class StorageService:
         self,
         content_hash: str,
         folder: str = "raw",
-        filename: str | None = None,
         expires_in: int = 3600,  # 1 hour
         response_content_type: str | None = None,
     ) -> str:
@@ -81,7 +80,6 @@ class StorageService:
         Args:
             content_hash: SHA-256 hash of the file
             folder: Storage folder (raw, processed, thumbnails)
-            filename: Optional custom filename for download
             expires_in: URL expiration in seconds
             response_content_type: Optional content type for response
 
@@ -99,8 +97,10 @@ class StorageService:
             "Bucket": self._bucket_name,
             "Key": key,
         }
-        if filename:
-            params["ResponseContentDisposition"] = f'attachment; filename="{filename}"'
+        if folder == "raw":
+            params["ResponseContentDisposition"] = (
+                f'attachment; filename="{content_hash}.pdf"'
+            )
         if response_content_type:
             params["ResponseContentType"] = response_content_type
 
