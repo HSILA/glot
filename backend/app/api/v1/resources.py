@@ -207,7 +207,10 @@ async def confirm_upload(
 
     # Ensure authoritative page_count and thumbnail from the uploaded PDF.
     needs_page_count = not resource.page_count
-    needs_thumbnail = not storage.file_exists(resource.content_hash, folder="thumbnails")
+    needs_thumbnail = not await storage.async_file_exists(
+        resource.content_hash,
+        folder="thumbnails",
+    )
 
     if needs_page_count or needs_thumbnail:
         try:
@@ -217,7 +220,10 @@ async def confirm_upload(
             from PIL import Image
 
             # Download PDF from R2
-            pdf_bytes = storage.download_file(resource.content_hash, folder="raw")
+            pdf_bytes = await storage.async_download_file(
+                resource.content_hash,
+                folder="raw",
+            )
 
             # Open PDF with PyMuPDF
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
@@ -234,7 +240,10 @@ async def confirm_upload(
 
                 thumbnail_buffer = io.BytesIO()
                 img.save(thumbnail_buffer, format="WEBP", quality=85)
-                storage.upload_thumbnail(thumbnail_buffer.getvalue(), resource.content_hash)
+                await storage.async_upload_thumbnail(
+                    thumbnail_buffer.getvalue(),
+                    resource.content_hash,
+                )
 
             doc.close()
         except Exception as e:
@@ -551,9 +560,9 @@ async def delete_resource(
             # Delete from R2
             content_hash = resource.content_hash
             if not content_hash.startswith("pending_"):
-                storage.delete_file(content_hash, folder="raw")
-                storage.delete_file(content_hash, folder="thumbnails")
-                storage.delete_processed_folder(content_hash)
+                await storage.async_delete_file(content_hash, folder="raw")
+                await storage.async_delete_file(content_hash, folder="thumbnails")
+                await storage.async_delete_processed_folder(content_hash)
 
             # Delete from database
             await session.delete(resource)
@@ -628,7 +637,7 @@ async def get_thumbnail_url(
         raise HTTPException(status_code=403, detail="Resource not accessible")
 
     # Generate URL
-    if not storage.file_exists(resource.content_hash, folder="thumbnails"):
+    if not await storage.async_file_exists(resource.content_hash, folder="thumbnails"):
         # Return default placeholder or 404?
         # For now, 404 so frontend can show default icon
         raise HTTPException(status_code=404, detail="Thumbnail not found")
