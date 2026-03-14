@@ -30,7 +30,7 @@ from app.models.resource import ExtractionStatus
 from app.services import RedisService, StorageService
 
 
-def _render_page_to_temp(
+async def _render_page_to_temp(
     storage: StorageService,
     resource: Resource,
     page_number: int,
@@ -38,7 +38,7 @@ def _render_page_to_temp(
     dpi: int = 200,
 ) -> None:
     """Render a single PDF page to temp storage (1-indexed page number)."""
-    pdf_bytes = storage.download_file(resource.content_hash, folder="raw")
+    pdf_bytes = await storage.async_download_file(resource.content_hash, folder="raw")
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         total_pages = len(doc)
@@ -49,7 +49,7 @@ def _render_page_to_temp(
 
         page = doc[page_number - 1]
         pix = page.get_pixmap(dpi=dpi)
-        storage.upload_file(
+        await storage.async_upload_file(
             pix.tobytes("png"),
             f"temp/{resource.content_hash}/page_{page_number}.png",
             folder=None,
@@ -59,9 +59,13 @@ def _render_page_to_temp(
         doc.close()
 
 
-def _ensure_thumbnail(storage: StorageService, resource: Resource, doc: fitz.Document) -> None:
+async def _ensure_thumbnail(
+    storage: StorageService,
+    resource: Resource,
+    doc: fitz.Document,
+) -> None:
     """Create thumbnail if missing."""
-    if storage.file_exists(resource.content_hash, folder="thumbnails"):
+    if await storage.async_file_exists(resource.content_hash, folder="thumbnails"):
         return
 
     if len(doc) == 0:
@@ -74,13 +78,13 @@ def _ensure_thumbnail(storage: StorageService, resource: Resource, doc: fitz.Doc
 
     thumbnail_buffer = io.BytesIO()
     img.save(thumbnail_buffer, format="WEBP", quality=85)
-    storage.upload_thumbnail(thumbnail_buffer.getvalue(), resource.content_hash)
+    await storage.async_upload_thumbnail(thumbnail_buffer.getvalue(), resource.content_hash)
 
 
-def _safe_cleanup_temp_folder(storage: StorageService, content_hash: str) -> None:
+async def _safe_cleanup_temp_folder(storage: StorageService, content_hash: str) -> None:
     """Delete temp folder best-effort."""
     try:
-        storage.delete_temp_folder(content_hash)
+        await storage.async_delete_temp_folder(content_hash)
     except Exception as e:
         logger.warning(f"Failed to clean temp folder for {content_hash}: {e}")
 
@@ -119,7 +123,10 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
 
             if total_pages <= 0:
                 try:
-                    pdf_bytes = storage.download_file(resource.content_hash, folder="raw")
+                    pdf_bytes = await storage.async_download_file(
+                        resource.content_hash,
+                        folder="raw",
+                    )
                 except Exception as e:
                     logger.error(f"Failed to download PDF for page_count: {e}")
                     resource.extraction_status = ExtractionStatus.FAILED
@@ -157,13 +164,16 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
             await session.flush()
 
             # Ensure thumbnail exists
-            if not storage.file_exists(resource.content_hash, folder="thumbnails"):
+            if not await storage.async_file_exists(resource.content_hash, folder="thumbnails"):
                 if doc is None:
                     if pdf_bytes is None:
-                        pdf_bytes = storage.download_file(resource.content_hash, folder="raw")
+                        pdf_bytes = await storage.async_download_file(
+                            resource.content_hash,
+                            folder="raw",
+                        )
                     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
                 try:
-                    _ensure_thumbnail(storage, resource, doc)
+                    await _ensure_thumbnail(storage, resource, doc)
                 except Exception as e:
                     logger.warning(f"Failed to generate thumbnail for resource {resource_id}: {e}")
 
@@ -171,13 +181,16 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
             missing_pages: list[int] = []
             for page_num in range(1, total_pages + 1):
                 page_key = f"temp/{resource.content_hash}/page_{page_num}.png"
-                if not storage.file_exists(page_key, folder=None):
+                if not await storage.async_file_exists(page_key, folder=None):
                     missing_pages.append(page_num)
 
             if missing_pages:
                 if doc is None:
                     if pdf_bytes is None:
-                        pdf_bytes = storage.download_file(resource.content_hash, folder="raw")
+                        pdf_bytes = await storage.async_download_file(
+                            resource.content_hash,
+                            folder="raw",
+                        )
                     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
 
                 logger.info(
@@ -186,7 +199,7 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
                 for page_num in missing_pages:
                     page = doc[page_num - 1]
                     pix = page.get_pixmap(dpi=200)
-                    storage.upload_file(
+                    await storage.async_upload_file(
                         pix.tobytes("png"),
                         f"temp/{resource.content_hash}/page_{page_num}.png",
                         folder=None,
@@ -218,7 +231,7 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
             if not incomplete_pages:
                 resource.extraction_status = ExtractionStatus.COMPLETED
                 resource.processed_at = utc_now()
-                _safe_cleanup_temp_folder(storage, resource.content_hash)
+                await _safe_cleanup_temp_folder(storage, resource.content_hash)
 
             await session.commit()
 
@@ -300,19 +313,22 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
             png_bytes: bytes | None = None
 
             try:
-                png_bytes = storage.download_file(temp_path, folder=None)
+                png_bytes = await storage.async_download_file(temp_path, folder=None)
             except Exception:
                 # Self-healing fallback: render missing page image on demand.
                 try:
-                    _render_page_to_temp(storage, resource, page_number)
-                    png_bytes = storage.download_file(temp_path, folder=None)
+                    await _render_page_to_temp(storage, resource, page_number)
+                    png_bytes = await storage.async_download_file(temp_path, folder=None)
                 except Exception as render_error:
                     # If markdown already exists, mark complete and recover.
                     try:
                         processed_path = (
                             f"processed/{resource.content_hash}/page_{page_number:04d}.md"
                         )
-                        existing_markdown = storage.download_file(processed_path, folder=None)
+                        existing_markdown = await storage.async_download_file(
+                            processed_path,
+                            folder=None,
+                        )
                         if existing_markdown:
                             page.status = PageStatus.COMPLETED
                             page.completed_at = utc_now()
@@ -325,7 +341,10 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
                             )
                             await session.commit()
                             if completed_now:
-                                _safe_cleanup_temp_folder(storage, resource.content_hash)
+                                await _safe_cleanup_temp_folder(
+                                    storage,
+                                    resource.content_hash,
+                                )
                             return {
                                 "success": True,
                                 "page": page_number,
@@ -346,7 +365,7 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
             result = agent.extract_page(png_bytes, page_number)
 
             if result.success:
-                storage.upload_processed_page(
+                await storage.async_upload_processed_page(
                     result.markdown,
                     resource.content_hash,
                     page_number,
@@ -370,12 +389,12 @@ async def extract_page(ctx: dict, resource_id: int, page_number: int) -> dict:
 
             if result.success:
                 try:
-                    storage.delete_file(temp_path, folder=None)
+                    await storage.async_delete_file(temp_path, folder=None)
                 except Exception as e:
                     logger.warning(f"Failed to delete temp file {temp_path}: {e}")
 
                 if completed_now:
-                    _safe_cleanup_temp_folder(storage, resource.content_hash)
+                    await _safe_cleanup_temp_folder(storage, resource.content_hash)
 
             return {"success": result.success, "page": page_number}
 
@@ -551,7 +570,7 @@ async def check_orphan_resources(ctx: dict):
                     resource.extraction_status = ExtractionStatus.COMPLETED
                     resource.processed_at = utc_now()
                     fixed += 1
-                    _safe_cleanup_temp_folder(storage, resource.content_hash)
+                    await _safe_cleanup_temp_folder(storage, resource.content_hash)
                     logger.info(
                         f"Fixed orphan resource {resource.id}: all {total} pages completed"
                     )

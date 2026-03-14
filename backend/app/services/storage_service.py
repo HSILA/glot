@@ -8,6 +8,7 @@ Provides S3-compatible operations for:
 - Content hash computation
 """
 
+import asyncio
 import hashlib
 from typing import BinaryIO
 
@@ -276,6 +277,72 @@ class StorageService:
             MaxKeys=1,
         )
         return response.get("KeyCount", 0) > 0
+
+    # Async wrappers for network-bound boto3 operations.
+    # These keep async API/worker paths from blocking the event loop.
+    async def async_upload_file(
+        self,
+        file: bytes | BinaryIO,
+        key_or_hash: str,
+        folder: str | None = "raw",
+        content_type: str = "application/pdf",
+    ) -> None:
+        await asyncio.to_thread(
+            self.upload_file,
+            file,
+            key_or_hash,
+            folder,
+            content_type,
+        )
+
+    async def async_download_file(
+        self,
+        key_or_hash: str,
+        folder: str | None = "raw",
+    ) -> bytes:
+        return await asyncio.to_thread(self.download_file, key_or_hash, folder)
+
+    async def async_delete_file(
+        self,
+        key_or_hash: str,
+        folder: str | None = "raw",
+    ) -> None:
+        await asyncio.to_thread(self.delete_file, key_or_hash, folder)
+
+    async def async_delete_folder(self, prefix: str) -> None:
+        await asyncio.to_thread(self.delete_folder, prefix)
+
+    async def async_delete_processed_folder(self, content_hash: str) -> None:
+        await asyncio.to_thread(self.delete_processed_folder, content_hash)
+
+    async def async_delete_temp_folder(self, content_hash: str) -> None:
+        await asyncio.to_thread(self.delete_temp_folder, content_hash)
+
+    async def async_file_exists(
+        self,
+        key_or_hash: str,
+        folder: str | None = "raw",
+    ) -> bool:
+        return await asyncio.to_thread(self.file_exists, key_or_hash, folder)
+
+    async def async_folder_exists(self, prefix: str) -> bool:
+        return await asyncio.to_thread(self.folder_exists, prefix)
+
+    async def async_upload_thumbnail(self, image_bytes: bytes, content_hash: str) -> None:
+        await asyncio.to_thread(self.upload_thumbnail, image_bytes, content_hash)
+
+    async def async_upload_processed_page(
+        self,
+        markdown_content: str,
+        content_hash: str,
+        page_number: int,
+    ) -> None:
+        await asyncio.to_thread(
+            self.upload_processed_page,
+            markdown_content,
+            content_hash,
+            page_number,
+        )
 
     @staticmethod
     def compute_hash(file: BinaryIO, chunk_size: int = 8192) -> str:
