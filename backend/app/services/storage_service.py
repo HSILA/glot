@@ -53,8 +53,22 @@ class StorageService:
         without_controls = _CONTROL_CHARS_RE.sub("_", ascii_filename)
         sanitized = _FILENAME_UNSAFE_CHARS_RE.sub("_", without_controls)
         sanitized = _FILENAME_REPEAT_UNDERSCORE_RE.sub("_", sanitized)
-        sanitized = _FILENAME_REPEAT_SPACE_RE.sub(" ", sanitized).strip(" ._")
-        return sanitized or "download"
+        sanitized = _FILENAME_REPEAT_SPACE_RE.sub(" ", sanitized)
+
+        stem_part, ext_part = sanitized, ""
+        if "." in sanitized and not sanitized.endswith("."):
+            stem_part, ext_part = sanitized.rsplit(".", 1)
+
+        safe_stem = stem_part.strip(" ._")
+        safe_ext = ext_part.strip(" ._")
+
+        if not safe_stem:
+            safe_stem = "download"
+
+        if safe_ext:
+            return f"{safe_stem}.{safe_ext}"
+
+        return safe_stem
 
     def generate_upload_url(
         self,

@@ -22,9 +22,10 @@ def _build_storage_service() -> tuple[StorageService, Mock]:
         ("lesson-notes.pdf", 'attachment; filename="lesson-notes.pdf"'),
         ("evil\r\nX-Test: injected.pdf", 'attachment; filename="evil_X-Test_ injected.pdf"'),
         ("null\x00byte\x1fname.pdf", 'attachment; filename="null_byte_name.pdf"'),
-        ('quote"file".pdf', 'attachment; filename="quote_file_.pdf"'),
+        ('quote"file".pdf', 'attachment; filename="quote_file.pdf"'),
         ("semi;colon.pdf", 'attachment; filename="semi_colon.pdf"'),
         ("résumé.pdf", 'attachment; filename="resume.pdf"'),
+        ("文件.pdf", 'attachment; filename="download.pdf"'),
     ],
 )
 def test_generate_download_url_sanitizes_content_disposition_filename(
