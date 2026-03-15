@@ -196,7 +196,7 @@ export function EditDeckModal({ open, onOpenChange, deck, onUpdated }: EditDeckM
                   <button
                     type="button"
                     onClick={() => removeTag(tag)}
-                    className="rounded hover:bg-black/10 p-0.5"
+                    className="rounded hover:bg-black/10 p-0.5 cursor-pointer disabled:cursor-not-allowed"
                     aria-label={`Remove tag ${tag}`}
                     disabled={isSubmitting}
                   >
@@ -216,7 +216,7 @@ export function EditDeckModal({ open, onOpenChange, deck, onUpdated }: EditDeckM
                   key={option}
                   type="button"
                   onClick={() => setColor(option)}
-                  className={`h-8 w-8 rounded-md border transition ${
+                  className={`h-8 w-8 rounded-md border transition cursor-pointer disabled:cursor-not-allowed ${
                     color === option ? "ring-2 ring-primary ring-offset-1" : ""
                   }`}
                   style={{ backgroundColor: option }}
