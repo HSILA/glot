@@ -195,7 +195,7 @@ export function EditCardModal({ open, onOpenChange, card, onSuccess }: EditCardM
                     <button
                       type="button"
                       onClick={() => removeTag(tag)}
-                      className="rounded hover:bg-black/10 p-0.5"
+                      className="rounded hover:bg-black/10 p-0.5 cursor-pointer disabled:cursor-not-allowed"
                       aria-label={`Remove tag ${tag}`}
                       disabled={isSubmitting}
                     >

@@ -235,7 +235,7 @@ export function NewDeckModal({ open, onOpenChange, onCreated }: NewDeckModalProp
                   key={option}
                   type="button"
                   onClick={() => setColor(option)}
-                  className={`h-8 w-8 rounded-md border transition ${
+                  className={`h-8 w-8 rounded-md border transition cursor-pointer disabled:cursor-not-allowed ${
                     color === option ? "ring-2 ring-primary ring-offset-1" : ""
                   }`}
                   style={{ backgroundColor: option }}
