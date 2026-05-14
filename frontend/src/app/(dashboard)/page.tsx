@@ -1,194 +1,627 @@
 "use client";
 
-import { Play, BookOpen, Clock, TrendingUp } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
+import { Icon } from "@/components/glot/icon";
+import { useAuth } from "@/components/providers/auth-provider";
+import { decksApi, type Deck } from "@/lib/api/decks";
 
-// Mock data for demo
-const recentBooks = [
-  {
-    id: 1,
-    title: "Japanese Grammar",
-    cover: "https://images.unsplash.com/photo-1528164344705-47542687000d?w=200&h=300&fit=crop",
-    progress: 45,
-  },
-  {
-    id: 2,
-    title: "Medical Terms",
-    cover: "https://images.unsplash.com/photo-1532012197267-da84d127e765?w=200&h=300&fit=crop",
-    progress: 72,
-  },
-  {
-    id: 3,
-    title: "Philosophy 101",
-    cover: "https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=200&h=300&fit=crop",
-    progress: 23,
-  },
-  {
-    id: 4,
-    title: "Spanish Vocab",
-    cover: "https://images.unsplash.com/photo-1512820790803-83ca734da794?w=200&h=300&fit=crop",
-    progress: 88,
-  },
-];
+async function listAllDecks(): Promise<Deck[]> {
+  const all: Deck[] = [];
+  const limit = 100;
+  let offset = 0;
+  while (true) {
+    const page = await decksApi.listDecks({ limit, offset });
+    all.push(...page);
+    if (page.length < limit) break;
+    offset += limit;
+  }
+  return all;
+}
 
-const stats = [
-  { label: "Streak", value: "7 days", icon: TrendingUp },
-  { label: "Today", value: "45 min", icon: Clock },
-  { label: "Mastered", value: "234", icon: BookOpen },
-];
+function greetingForHour(hour: number): string {
+  if (hour < 5) return "Late night";
+  if (hour < 12) return "Good morning";
+  if (hour < 17) return "Good afternoon";
+  if (hour < 21) return "Good evening";
+  return "Good night";
+}
+
+function formatRelative(value: string | null): string {
+  if (!value) return "Never studied";
+  const ts = new Date(value).getTime();
+  if (Number.isNaN(ts)) return "Unknown";
+  const days = Math.floor((Date.now() - ts) / (1000 * 60 * 60 * 24));
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
 
 export default function MyDayPage() {
-  const reviewsDue = 12;
-  const totalForDay = 30;
-  const progressPercent = ((totalForDay - reviewsDue) / totalForDay) * 100;
+  const router = useRouter();
+  const { user } = useAuth();
+
+  const [decks, setDecks] = useState<Deck[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const requestIdRef = useRef(0);
+
+  const loadDecks = useCallback(async () => {
+    const requestId = ++requestIdRef.current;
+    setIsLoading(true);
+    setError(null);
+    try {
+      const userDecks = await listAllDecks();
+      if (requestId !== requestIdRef.current) return;
+      setDecks(userDecks);
+    } catch (err) {
+      if (requestId !== requestIdRef.current) return;
+      setError(err instanceof Error ? err.message : "Failed to load");
+    } finally {
+      if (requestId === requestIdRef.current) setIsLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadDecks();
+    return () => {
+      requestIdRef.current += 1;
+    };
+  }, [loadDecks]);
+
+  const greeting = useMemo(() => greetingForHour(new Date().getHours()), []);
+
+  const stats = useMemo(() => {
+    const totalDue = decks.reduce((sum, d) => sum + d.due_count, 0);
+    const totalNew = decks.reduce((sum, d) => sum + d.new_count, 0);
+    const totalCards = decks.reduce((sum, d) => sum + d.cards_count, 0);
+    const activeDecks = decks.filter((d) => d.due_count + d.new_count > 0);
+    return { totalDue, totalNew, totalCards, activeDecks };
+  }, [decks]);
+
+  const recentDecks = useMemo(() => {
+    return [...decks]
+      .filter((d) => d.last_studied_at)
+      .sort((a, b) => {
+        const ta = new Date(a.last_studied_at ?? 0).getTime();
+        const tb = new Date(b.last_studied_at ?? 0).getTime();
+        return tb - ta;
+      })
+      .slice(0, 4);
+  }, [decks]);
+
+  const dueDecks = useMemo(
+    () =>
+      [...stats.activeDecks].sort(
+        (a, b) => b.due_count + b.new_count - (a.due_count + a.new_count)
+      ),
+    [stats.activeDecks]
+  );
+
+  const firstName = useMemo(() => {
+    if (!user) return "";
+    if (user.display_name) return user.display_name.split(" ")[0];
+    return user.email.split("@")[0];
+  }, [user]);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="h-6 w-6 animate-spin" style={{ color: "var(--muted)" }} />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-center py-32 space-y-4">
+        <p style={{ color: "var(--muted)" }}>{error}</p>
+        <Button variant="outline" onClick={() => void loadDecks()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
+
+  const todayTotal = stats.totalDue + stats.totalNew;
 
   return (
-    <div className="space-y-8 max-w-4xl mx-auto">
-      {/* Hero Section with Progress Ring */}
-      <section className="flex flex-col items-center text-center pt-8 md:pt-12">
-        {/* Circular Progress */}
-        <div className="relative w-48 h-48 md:w-56 md:h-56 mb-6">
-          <svg
-            className="w-full h-full transform -rotate-90"
-            viewBox="0 0 100 100"
-          >
-            {/* Background circle */}
-            <circle
-              cx="50"
-              cy="50"
-              r="42"
-              fill="none"
-              strokeWidth="8"
-              className="stroke-muted"
-            />
-            {/* Progress circle */}
-            <circle
-              cx="50"
-              cy="50"
-              r="42"
-              fill="none"
-              strokeWidth="8"
-              strokeLinecap="round"
-              className="stroke-primary transition-all duration-700 ease-out"
-              style={{
-                strokeDasharray: `${2 * Math.PI * 42}`,
-                strokeDashoffset: `${2 * Math.PI * 42 * (1 - progressPercent / 100)}`,
-              }}
-            />
-          </svg>
-          {/* Center content */}
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <span className="text-4xl md:text-5xl font-bold text-foreground">
-              {reviewsDue}
-            </span>
-            <span className="text-sm text-muted-foreground mt-1">
-              Reviews Due
-            </span>
+    <div className="max-w-5xl mx-auto space-y-12 pb-8">
+      {/* Editorial hero */}
+      <section className="pt-2 md:pt-6">
+        <div className="flex items-center gap-2 mb-3">
+          <span className="pill outline">
+            <Icon name="flame" size={12} />
+            {new Date().toLocaleDateString(undefined, {
+              weekday: "long",
+              month: "short",
+              day: "numeric",
+            })}
+          </span>
+        </div>
+
+        <h1
+          className="serif"
+          style={{
+            fontSize: "clamp(40px, 6vw, 64px)",
+            lineHeight: 1,
+            letterSpacing: "-0.03em",
+            fontWeight: 500,
+          }}
+        >
+          {greeting}
+          {firstName ? (
+            <>
+              ,<br />
+              <span style={{ color: "var(--accent)" }}>{firstName}</span>.
+            </>
+          ) : (
+            "."
+          )}
+        </h1>
+
+        <p className="mt-4 max-w-xl" style={{ color: "var(--muted)", fontSize: 15 }}>
+          {todayTotal > 0 ? (
+            <>
+              You have{" "}
+              <span style={{ color: "var(--fg)", fontWeight: 600 }}>
+                {todayTotal} card{todayTotal === 1 ? "" : "s"}
+              </span>{" "}
+              waiting across {stats.activeDecks.length} deck
+              {stats.activeDecks.length === 1 ? "" : "s"}. Let&apos;s keep momentum.
+            </>
+          ) : decks.length === 0 ? (
+            <>No decks yet. Create your first one to start practicing.</>
+          ) : (
+            <>Inbox zero. No cards due — a perfect time to add new material.</>
+          )}
+        </p>
+      </section>
+
+      {/* Hero numeral row */}
+      <section
+        className="grid gap-4 md:grid-cols-[1.4fr_1fr] items-stretch"
+        style={{ gap: "calc(16px * var(--d-gap))" }}
+      >
+        {/* The big number block */}
+        <div
+          className="glot-card relative overflow-hidden p-6 md:p-8 grid-bg"
+          style={{ minHeight: 220 }}
+        >
+          <div className="absolute inset-x-0 top-0 h-px"
+            style={{ background: "linear-gradient(90deg,transparent, var(--accent) 50%, transparent)" }}
+          />
+
+          <div className="flex items-start justify-between gap-4 flex-wrap">
+            <div>
+              <div
+                className="mono"
+                style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
+              >
+                CARDS DUE TODAY
+              </div>
+              <div
+                className="numeral mt-2"
+                style={{
+                  fontSize: "clamp(80px, 14vw, 140px)",
+                  color: "var(--fg)",
+                }}
+              >
+                {todayTotal}
+              </div>
+              <div
+                className="mono mt-1 flex items-center gap-3"
+                style={{ fontSize: 12, color: "var(--muted-2)" }}
+              >
+                <span>{stats.totalDue} review</span>
+                <span style={{ color: "var(--line-2)" }}>·</span>
+                <span>{stats.totalNew} new</span>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-2 items-end">
+              <Button
+                size="lg"
+                className="gap-2"
+                disabled={todayTotal === 0}
+                onClick={() => router.push("/session")}
+              >
+                <Icon name="play" size={14} />
+                Study now
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => router.push("/decks")}
+                className="gap-2"
+              >
+                <Icon name="plus" size={12} />
+                New card
+              </Button>
+            </div>
           </div>
         </div>
 
-        {/* Greeting */}
-        <h1 className="text-2xl md:text-3xl font-semibold mb-2">
-          Good afternoon!
-        </h1>
-        <p className="text-muted-foreground mb-6">
-          You&apos;re almost there. Keep up the great work!
-        </p>
-
-        {/* Start Session Button */}
-        <Button
-          size="lg"
-          className="gap-2 h-12 px-8 text-base shadow-lg hover:shadow-xl transition-shadow"
-        >
-          <Play className="h-5 w-5" />
-          Start Session
-        </Button>
-      </section>
-
-      {/* Stats Grid */}
-      <section className="grid grid-cols-3 gap-3 md:gap-4">
-        {stats.map((stat) => (
-          <Card key={stat.label} className="text-center">
-            <CardContent className="pt-6 pb-4">
-              <stat.icon className="h-5 w-5 mx-auto text-primary mb-2" />
-              <div className="text-xl md:text-2xl font-bold">{stat.value}</div>
-              <div className="text-xs text-muted-foreground">{stat.label}</div>
-            </CardContent>
-          </Card>
-        ))}
-      </section>
-
-      {/* Recent Books - Horizontal Scroll */}
-      <section>
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-lg font-semibold">Recent Books</h2>
-          <Button variant="ghost" size="sm" className="text-primary">
-            See all
-          </Button>
+        {/* Side momentum stats */}
+        <div className="grid grid-cols-2 gap-3">
+          <StatTile
+            label="Decks"
+            value={decks.length}
+            icon="layers"
+          />
+          <StatTile
+            label="Library"
+            value={stats.totalCards}
+            sub="cards"
+            icon="book"
+          />
+          <StatTile
+            label="Active"
+            value={stats.activeDecks.length}
+            icon="bolt"
+          />
+          <StatTile
+            label="Last"
+            value={recentDecks[0] ? formatRelative(recentDecks[0].last_studied_at) : "—"}
+            icon="clock"
+            small
+          />
         </div>
-        <ScrollArea className="w-full whitespace-nowrap rounded-lg">
-          <div className="flex gap-4 pb-4">
-            {recentBooks.map((book) => (
-              <Card
-                key={book.id}
-                className="w-[140px] md:w-[160px] flex-shrink-0 overflow-hidden group cursor-pointer hover:shadow-lg transition-shadow"
+      </section>
+
+      {/* Stack: due decks */}
+      {dueDecks.length > 0 && (
+        <section>
+          <SectionHeader
+            kicker="QUEUE"
+            title="Due decks"
+            action={
+              <Link
+                href="/decks"
+                className="mono flex items-center gap-1"
+                style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.06em" }}
               >
-                <div className="aspect-[2/3] relative overflow-hidden">
-                  <img
-                    src={book.cover}
-                    alt={book.title}
-                    className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                  />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
-                </div>
-                <CardContent className="p-3">
-                  <h3 className="font-serif font-medium text-sm truncate mb-2">
-                    {book.title}
-                  </h3>
-                  <Progress value={book.progress} className="h-1.5" />
-                  <span className="text-xs text-muted-foreground mt-1 block">
-                    {book.progress}% complete
-                  </span>
-                </CardContent>
-              </Card>
+                ALL DECKS <Icon name="arrow" size={11} />
+              </Link>
+            }
+          />
+          <div className="grid gap-3 md:grid-cols-2">
+            {dueDecks.slice(0, 4).map((deck, idx) => (
+              <DeckQueueCard key={deck.id} deck={deck} index={idx} router={router} />
             ))}
           </div>
-          <ScrollBar orientation="horizontal" />
-        </ScrollArea>
-      </section>
+        </section>
+      )}
 
-      {/* Quick Actions */}
-      <section className="grid grid-cols-2 gap-4">
-        <Card className="cursor-pointer hover:shadow-md transition-shadow">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <BookOpen className="h-4 w-4 text-primary" />
-              Add Book
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Import a new book to your library
+      {/* Recent activity */}
+      {recentDecks.length > 0 && (
+        <section>
+          <SectionHeader kicker="ACTIVITY" title="Recently studied" />
+          <div
+            className="glot-card divide-y overflow-hidden"
+            style={{ borderColor: "var(--line)" }}
+          >
+            {recentDecks.map((deck) => (
+              <button
+                key={deck.id}
+                onClick={() => router.push(`/decks/${deck.id}`)}
+                className="w-full flex items-center gap-4 px-5 py-4 text-left transition-colors"
+                style={{ borderColor: "var(--line)" }}
+                onMouseEnter={(e) =>
+                  (e.currentTarget.style.background = "var(--surface-1)")
+                }
+                onMouseLeave={(e) =>
+                  (e.currentTarget.style.background = "transparent")
+                }
+              >
+                <DeckSwatch color={deck.color} />
+                <div className="flex-1 min-w-0">
+                  <div
+                    className="serif"
+                    style={{
+                      fontSize: 18,
+                      fontWeight: 500,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {deck.name}
+                  </div>
+                  <div
+                    className="mono mt-0.5"
+                    style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.04em" }}
+                  >
+                    {deck.cards_count} cards · {formatRelative(deck.last_studied_at)}
+                  </div>
+                </div>
+                <div className="hidden sm:flex items-center gap-2">
+                  {deck.due_count > 0 && (
+                    <span className="pill warn">{deck.due_count} due</span>
+                  )}
+                  {deck.new_count > 0 && (
+                    <span className="pill info">{deck.new_count} new</span>
+                  )}
+                </div>
+                <Icon name="chev" size={14} style={{ color: "var(--muted-2)" }} />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Empty state */}
+      {decks.length === 0 && (
+        <section className="glot-card p-12 text-center">
+          <div
+            className="inline-flex items-center justify-center mb-5"
+            style={{
+              width: 64,
+              height: 64,
+              borderRadius: 14,
+              background: "var(--surface-1)",
+              border: "1px solid var(--line)",
+              color: "var(--accent)",
+            }}
+          >
+            <Icon name="layers" size={28} />
+          </div>
+          <h2 className="serif" style={{ fontSize: 24, fontWeight: 500 }}>
+            Build your first deck
+          </h2>
+          <p
+            className="mt-2 mx-auto max-w-md"
+            style={{ color: "var(--muted)", fontSize: 14 }}
+          >
+            Decks hold cards. Cards flow through the FSRS scheduler to keep you sharp.
+          </p>
+          <Button className="mt-6 gap-2" onClick={() => router.push("/decks")}>
+            <Icon name="plus" size={14} />
+            Create deck
+          </Button>
+        </section>
+      )}
+    </div>
+  );
+}
+
+function StatTile({
+  label,
+  value,
+  sub,
+  icon,
+  small,
+}: {
+  label: string;
+  value: string | number;
+  sub?: string;
+  icon: React.ComponentProps<typeof Icon>["name"];
+  small?: boolean;
+}) {
+  return (
+    <div className="glot-card p-4 flex flex-col justify-between" style={{ minHeight: 100 }}>
+      <div
+        className="mono flex items-center gap-2"
+        style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
+      >
+        <Icon name={icon} size={12} />
+        {label.toUpperCase()}
+      </div>
+      <div className="mt-2 flex items-baseline gap-1.5">
+        <span
+          className={small ? "" : "numeral"}
+          style={{
+            fontSize: small ? 18 : 34,
+            fontFamily: small ? "var(--sans)" : undefined,
+            fontWeight: small ? 600 : undefined,
+            color: "var(--fg)",
+            letterSpacing: small ? "-0.01em" : undefined,
+          }}
+        >
+          {value}
+        </span>
+        {sub && (
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted)" }}
+          >
+            {sub}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionHeader({
+  kicker,
+  title,
+  action,
+}: {
+  kicker: string;
+  title: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-end justify-between mb-4 gap-4">
+      <div>
+        <div
+          className="mono"
+          style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.12em" }}
+        >
+          {kicker}
+        </div>
+        <h2
+          className="serif mt-1"
+          style={{ fontSize: 28, fontWeight: 500, letterSpacing: "-0.02em" }}
+        >
+          {title}
+        </h2>
+      </div>
+      {action}
+    </div>
+  );
+}
+
+function DeckSwatch({ color }: { color: string | null }) {
+  const c = color || "var(--accent)";
+  return (
+    <div
+      aria-hidden
+      style={{
+        width: 38,
+        height: 38,
+        borderRadius: 8,
+        background: `color-mix(in oklab, ${c} 16%, transparent)`,
+        border: `1px solid color-mix(in oklab, ${c} 30%, transparent)`,
+        display: "grid",
+        placeItems: "center",
+        flexShrink: 0,
+      }}
+    >
+      <span
+        style={{
+          width: 14,
+          height: 14,
+          borderRadius: 4,
+          background: c,
+          display: "block",
+        }}
+      />
+    </div>
+  );
+}
+
+function DeckQueueCard({
+  deck,
+  index,
+  router,
+}: {
+  deck: Deck;
+  index: number;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const total = deck.due_count + deck.new_count;
+  return (
+    <div
+      role="link"
+      tabIndex={0}
+      onClick={() => router.push(`/decks/${deck.id}`)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          router.push(`/decks/${deck.id}`);
+        }
+      }}
+      className="glot-card p-5 cursor-pointer group relative overflow-hidden"
+      style={{
+        transition: "border-color .15s ease, transform .15s ease",
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = "var(--line-2)";
+        e.currentTarget.style.transform = "translateY(-1px)";
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = "var(--line)";
+        e.currentTarget.style.transform = "translateY(0)";
+      }}
+    >
+      {/* Decorative stack lines */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          right: -6,
+          top: 18,
+          height: 6,
+          width: 60,
+          borderRadius: 999,
+          background: "var(--line)",
+          opacity: 0.6,
+        }}
+      />
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          right: -12,
+          top: 28,
+          height: 4,
+          width: 80,
+          borderRadius: 999,
+          background: "var(--line)",
+          opacity: 0.4,
+        }}
+      />
+
+      <div className="flex items-start gap-3">
+        <DeckSwatch color={deck.color} />
+        <div className="min-w-0 flex-1">
+          <div
+            className="mono"
+            style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
+          >
+            #{String(index + 1).padStart(2, "0")}
+          </div>
+          <h3
+            className="serif mt-1"
+            style={{
+              fontSize: 20,
+              fontWeight: 500,
+              letterSpacing: "-0.02em",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {deck.name}
+          </h3>
+          {deck.description && (
+            <p
+              className="mt-1 line-clamp-1"
+              style={{ fontSize: 13, color: "var(--muted)" }}
+            >
+              {deck.description}
             </p>
-          </CardContent>
-        </Card>
-        <Card className="cursor-pointer hover:shadow-md transition-shadow">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <TrendingUp className="h-4 w-4 text-primary" />
-              View Stats
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <p className="text-sm text-muted-foreground">
-              Check your learning progress
-            </p>
-          </CardContent>
-        </Card>
-      </section>
+          )}
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between mt-5 pt-4" style={{ borderTop: "1px solid var(--line)" }}>
+        <div className="flex items-center gap-2">
+          {deck.due_count > 0 && (
+            <span className="pill warn">{deck.due_count} due</span>
+          )}
+          {deck.new_count > 0 && (
+            <span className="pill info">{deck.new_count} new</span>
+          )}
+          {total === 0 && <span className="pill outline">caught up</span>}
+        </div>
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            router.push(`/session?deck_id=${deck.id}`);
+          }}
+          className="mono flex items-center gap-1"
+          style={{
+            fontSize: 11,
+            letterSpacing: "0.08em",
+            color: "var(--accent)",
+            background: "transparent",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+          }}
+        >
+          STUDY <Icon name="arrow" size={11} />
+        </button>
+      </div>
     </div>
   );
 }
