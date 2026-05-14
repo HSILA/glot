@@ -58,9 +58,7 @@ services:
       # Override for Docker networking
       DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/glot"
       DATABASE_URL_SYNC: "postgresql+psycopg2://postgres:postgres@postgres:5432/glot"
-      # For local Redis: use the line below
-      # REDIS_URL: "redis://redis:6379"
-      # For cloud Redis (e.g., Upstash): set REDIS_URL in .env file
+      REDIS_URL: "redis://redis:6379"
       CORS_ORIGINS: '["http://localhost:3000","http://frontend:3000"]'
     depends_on:
       postgres:
@@ -104,17 +102,12 @@ services:
       # Override for Docker networking
       DATABASE_URL: "postgresql+asyncpg://postgres:postgres@postgres:5432/glot"
       DATABASE_URL_SYNC: "postgresql+psycopg2://postgres:postgres@postgres:5432/glot"
-      # For local Redis: use the line below
-      # REDIS_URL: "redis://redis:6379"
-      # For cloud Redis (e.g., Upstash): set REDIS_URL in .env file
+      REDIS_URL: "redis://redis:6379"
     depends_on:
       postgres:
         condition: service_healthy
-      backend:
+      redis:
         condition: service_healthy
-      # Uncomment redis dependency if using local Redis
-      # redis:
-      #   condition: service_healthy
 
 volumes:
   postgres_data:
