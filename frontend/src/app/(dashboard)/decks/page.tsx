@@ -110,6 +110,11 @@ export default function DecksPage() {
 
   const totalToday = totalDue + totalNew;
 
+  const totalCards = useMemo(
+    () => decks.reduce((sum, deck) => sum + deck.cards_count, 0),
+    [decks]
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const arr = q
@@ -190,40 +195,31 @@ export default function DecksPage() {
     <div className="max-w-5xl mx-auto space-y-8 pb-8">
       {/* Editorial header */}
       <header>
-        <div
-          className="mono"
-          style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.12em" }}
-        >
-          COLLECTION
-        </div>
-        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4 mt-2">
+        <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
+            <div
+              className="mono"
+              style={{
+                fontSize: 11,
+                color: "var(--muted)",
+                letterSpacing: "0.12em",
+                marginBottom: 6,
+              }}
+            >
+              {String(decks.length).padStart(2, "0")} {decks.length === 1 ? "DECK" : "DECKS"} ·{" "}
+              {totalCards.toLocaleString()} {totalCards === 1 ? "CARD" : "CARDS"}
+            </div>
             <h1
               className="serif"
               style={{
-                fontSize: "clamp(36px, 5vw, 52px)",
+                fontSize: "clamp(36px, 5vw, 56px)",
                 fontWeight: 500,
                 lineHeight: 1,
                 letterSpacing: "-0.03em",
               }}
             >
-              Decks
+              Your <span style={{ fontStyle: "italic", color: "var(--muted)" }}>shelves.</span>
             </h1>
-            <p
-              className="mt-2"
-              style={{ color: "var(--muted)", fontSize: 14 }}
-            >
-              {decks.length} {decks.length === 1 ? "deck" : "decks"}
-              {totalToday > 0 && (
-                <>
-                  {" · "}
-                  <span style={{ color: "var(--fg)", fontWeight: 600 }}>
-                    {totalToday}
-                  </span>{" "}
-                  card{totalToday === 1 ? "" : "s"} to study today
-                </>
-              )}
-            </p>
           </div>
           <Button className="gap-2" onClick={() => setIsCreateDeckOpen(true)}>
             <Icon name="plus" size={14} />
