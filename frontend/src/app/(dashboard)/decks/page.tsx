@@ -206,7 +206,7 @@ export default function DecksPage() {
                 marginBottom: 6,
               }}
             >
-              {String(decks.length).padStart(2, "0")} {decks.length === 1 ? "DECK" : "DECKS"} ·{" "}
+              {decks.length.toLocaleString()} {decks.length === 1 ? "DECK" : "DECKS"} ·{" "}
               {totalCards.toLocaleString()} {totalCards === 1 ? "CARD" : "CARDS"}
             </div>
             <h1
