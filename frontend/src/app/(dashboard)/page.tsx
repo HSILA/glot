@@ -42,6 +42,17 @@ function formatRelative(value: string | null): string {
   return `${Math.floor(days / 30)}mo ago`;
 }
 
+function formatHeroDate(date: Date): string {
+  return date
+    .toLocaleDateString(undefined, {
+      weekday: "long",
+      month: "long",
+      day: "numeric",
+    })
+    .replace(",", " ·")
+    .toUpperCase();
+}
+
 export default function MyDayPage() {
   const router = useRouter();
   const { user } = useAuth();
@@ -75,14 +86,15 @@ export default function MyDayPage() {
     };
   }, [loadDecks]);
 
-  const greeting = useMemo(() => greetingForHour(new Date().getHours()), []);
+  const now = useMemo(() => new Date(), []);
+  const greeting = useMemo(() => greetingForHour(now.getHours()), [now]);
+  const heroDate = useMemo(() => formatHeroDate(now), [now]);
 
   const stats = useMemo(() => {
     const totalDue = decks.reduce((sum, d) => sum + d.due_count, 0);
     const totalNew = decks.reduce((sum, d) => sum + d.new_count, 0);
-    const totalCards = decks.reduce((sum, d) => sum + d.cards_count, 0);
     const activeDecks = decks.filter((d) => d.due_count + d.new_count > 0);
-    return { totalDue, totalNew, totalCards, activeDecks };
+    return { totalDue, totalNew, activeDecks };
   }, [decks]);
 
   const recentDecks = useMemo(() => {
@@ -133,145 +145,99 @@ export default function MyDayPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-12 pb-8">
-      {/* Editorial hero */}
+      {/* My Day hero — aligned with redesign mockup */}
       <section className="pt-2 md:pt-6">
-        <div className="flex items-center gap-2 mb-3">
-          <span className="pill outline">
-            <Icon name="flame" size={12} />
-            {new Date().toLocaleDateString(undefined, {
-              weekday: "long",
-              month: "short",
-              day: "numeric",
-            })}
-          </span>
-        </div>
-
-        <h1
-          className="serif"
-          style={{
-            fontSize: "clamp(40px, 6vw, 64px)",
-            lineHeight: 1,
-            letterSpacing: "-0.03em",
-            fontWeight: 500,
-          }}
-        >
-          {greeting}
-          {firstName ? (
-            <>
-              ,<br />
-              <span style={{ color: "var(--accent)" }}>{firstName}</span>.
-            </>
-          ) : (
-            "."
-          )}
-        </h1>
-
-        <p className="mt-4 max-w-xl" style={{ color: "var(--muted)", fontSize: 15 }}>
-          {todayTotal > 0 ? (
-            <>
-              You have{" "}
-              <span style={{ color: "var(--fg)", fontWeight: 600 }}>
-                {todayTotal} card{todayTotal === 1 ? "" : "s"}
-              </span>{" "}
-              waiting across {stats.activeDecks.length} deck
-              {stats.activeDecks.length === 1 ? "" : "s"}. Let&apos;s keep momentum.
-            </>
-          ) : decks.length === 0 ? (
-            <>No decks yet. Create your first one to start practicing.</>
-          ) : (
-            <>Inbox zero. No cards due — a perfect time to add new material.</>
-          )}
-        </p>
-      </section>
-
-      {/* Hero numeral row */}
-      <section
-        className="grid gap-4 md:grid-cols-[1.4fr_1fr] items-stretch"
-        style={{ gap: "calc(16px * var(--d-gap))" }}
-      >
-        {/* The big number block */}
-        <div
-          className="glot-card relative overflow-hidden p-6 md:p-8 grid-bg"
-          style={{ minHeight: 220 }}
-        >
-          <div className="absolute inset-x-0 top-0 h-px"
-            style={{ background: "linear-gradient(90deg,transparent, var(--accent) 50%, transparent)" }}
-          />
-
-          <div className="flex items-start justify-between gap-4 flex-wrap">
-            <div>
-              <div
-                className="mono"
-                style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
-              >
-                CARDS DUE TODAY
-              </div>
-              <div
-                className="numeral mt-2"
-                style={{
-                  fontSize: "clamp(80px, 14vw, 140px)",
-                  color: "var(--fg)",
-                }}
-              >
-                {todayTotal}
-              </div>
-              <div
-                className="mono mt-1 flex items-center gap-3"
-                style={{ fontSize: 12, color: "var(--muted-2)" }}
-              >
-                <span>{stats.totalDue} review</span>
-                <span style={{ color: "var(--line-2)" }}>·</span>
-                <span>{stats.totalNew} new</span>
-              </div>
+        <div className="flex items-baseline justify-between gap-4 mb-10 md:mb-14">
+          <div>
+            <div
+              className="mono"
+              style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em", marginBottom: 8 }}
+            >
+              {heroDate}
             </div>
-
-            <div className="flex flex-col gap-2 items-end">
-              <Button
-                size="lg"
-                className="gap-2"
-                disabled={todayTotal === 0}
-                onClick={() => router.push("/session")}
-              >
-                <Icon name="play" size={14} />
-                Study now
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => router.push("/decks")}
-                className="gap-2"
-              >
-                <Icon name="plus" size={12} />
-                New card
-              </Button>
-            </div>
+            <h1
+              className="serif"
+              style={{
+                fontSize: "clamp(34px, 5vw, 48px)",
+                fontWeight: 500,
+                letterSpacing: "-0.03em",
+                lineHeight: 1,
+              }}
+            >
+              {greeting}
+              {firstName ? (
+                <>
+                  , <span style={{ fontStyle: "italic", color: "var(--muted)" }}>{firstName}</span>.
+                </>
+              ) : (
+                "."
+              )}
+            </h1>
           </div>
         </div>
 
-        {/* Side momentum stats */}
-        <div className="grid grid-cols-2 gap-3">
-          <StatTile
-            label="Decks"
-            value={decks.length}
-            icon="layers"
+        <div
+          className="relative overflow-hidden"
+          style={{
+            padding: "clamp(28px, 6vw, 56px)",
+            borderRadius: 18,
+            background: "var(--surface)",
+            border: "1px solid var(--line)",
+          }}
+        >
+          <div
+            aria-hidden
+            style={{
+              position: "absolute",
+              top: -100,
+              right: -100,
+              width: 360,
+              height: 360,
+              background: "radial-gradient(circle, var(--accent-glow), transparent 60%)",
+              pointerEvents: "none",
+            }}
           />
-          <StatTile
-            label="Library"
-            value={stats.totalCards}
-            sub="cards"
-            icon="book"
-          />
-          <StatTile
-            label="Active"
-            value={stats.activeDecks.length}
-            icon="bolt"
-          />
-          <StatTile
-            label="Last"
-            value={recentDecks[0] ? formatRelative(recentDecks[0].last_studied_at) : "—"}
-            icon="clock"
-            small
-          />
+          <div className="relative flex flex-col gap-8 md:flex-row md:items-end md:justify-between">
+            <div style={{ flex: 1 }}>
+              <div
+                className="mono"
+                style={{ fontSize: 12, color: "var(--accent)", letterSpacing: "0.12em", marginBottom: 16 }}
+              >
+                ▸ TODAY
+              </div>
+              <div className="flex items-end gap-4 md:gap-[18px] mb-3">
+                <span className="numeral" style={{ fontSize: "clamp(110px, 18vw, 200px)" }}>
+                  {todayTotal}
+                </span>
+                <div style={{ paddingBottom: "clamp(14px, 2vw, 24px)" }}>
+                  <div
+                    className="serif"
+                    style={{ fontSize: "clamp(22px, 4vw, 32px)", lineHeight: 1, fontStyle: "italic", color: "var(--muted)" }}
+                  >
+                    cards
+                  </div>
+                  <div style={{ fontSize: 14, color: "var(--muted)", marginTop: 6 }}>to study</div>
+                </div>
+              </div>
+              <div className="flex gap-6 mt-5" style={{ color: "var(--muted)", fontSize: 13 }}>
+                <span>
+                  <span className="mono" style={{ color: "var(--warn)" }}>{stats.totalDue}</span> due
+                </span>
+                <span>
+                  <span className="mono" style={{ color: "var(--info)" }}>{stats.totalNew}</span> new
+                </span>
+              </div>
+            </div>
+            <button
+              onClick={() => router.push("/session")}
+              disabled={todayTotal === 0}
+              className="btn primary lg pulse"
+              style={{ padding: "20px 32px", fontSize: 17, gap: 12 }}
+            >
+              <Icon name="play" size={18} /> Start session
+              <span className="mono" style={{ fontSize: 11, opacity: 0.6, marginLeft: 4 }}>SPACE</span>
+            </button>
+          </div>
         </div>
       </section>
 
@@ -391,53 +357,6 @@ export default function MyDayPage() {
   );
 }
 
-function StatTile({
-  label,
-  value,
-  sub,
-  icon,
-  small,
-}: {
-  label: string;
-  value: string | number;
-  sub?: string;
-  icon: React.ComponentProps<typeof Icon>["name"];
-  small?: boolean;
-}) {
-  return (
-    <div className="glot-card p-4 flex flex-col justify-between" style={{ minHeight: 100 }}>
-      <div
-        className="mono flex items-center gap-2"
-        style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
-      >
-        <Icon name={icon} size={12} />
-        {label.toUpperCase()}
-      </div>
-      <div className="mt-2 flex items-baseline gap-1.5">
-        <span
-          className={small ? "" : "numeral"}
-          style={{
-            fontSize: small ? 18 : 34,
-            fontFamily: small ? "var(--sans)" : undefined,
-            fontWeight: small ? 600 : undefined,
-            color: "var(--fg)",
-            letterSpacing: small ? "-0.01em" : undefined,
-          }}
-        >
-          {value}
-        </span>
-        {sub && (
-          <span
-            className="mono"
-            style={{ fontSize: 11, color: "var(--muted)" }}
-          >
-            {sub}
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function SectionHeader({
   kicker,
