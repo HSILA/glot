@@ -241,12 +241,12 @@ export default function MyDayPage() {
         </div>
       </section>
 
-      {/* Stack: due decks */}
+      {/* Stack: due decks — Variant B card-stack style */}
       {dueDecks.length > 0 && (
         <section>
           <SectionHeader
             kicker="QUEUE"
-            title="Due decks"
+            title="All decks"
             action={
               <Link
                 href="/decks"
@@ -257,9 +257,9 @@ export default function MyDayPage() {
               </Link>
             }
           />
-          <div className="grid gap-3 md:grid-cols-2">
-            {dueDecks.slice(0, 4).map((deck, idx) => (
-              <DeckQueueCard key={deck.id} deck={deck} index={idx} router={router} />
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {dueDecks.map((deck) => (
+              <DeckQueueCard key={deck.id} deck={deck} router={router} />
             ))}
           </div>
         </section>
@@ -419,18 +419,22 @@ function DeckSwatch({ color }: { color: string | null }) {
 
 function DeckQueueCard({
   deck,
-  index,
   router,
 }: {
   deck: Deck;
-  index: number;
   router: ReturnType<typeof useRouter>;
 }) {
-  const total = deck.due_count + deck.new_count;
+  const due = deck.due_count;
+  const newCount = deck.new_count;
+  const total = due + newCount;
+  const primaryTag = deck.tags?.[0] || null;
+  const c = deck.color || "var(--accent)";
+
   return (
     <div
       role="link"
       tabIndex={0}
+      aria-label={`Open deck ${deck.name}`}
       onClick={() => router.push(`/decks/${deck.id}`)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -438,109 +442,121 @@ function DeckQueueCard({
           router.push(`/decks/${deck.id}`);
         }
       }}
-      className="glot-card p-5 cursor-pointer group relative overflow-hidden"
+      className="relative cursor-pointer group overflow-hidden"
       style={{
-        transition: "border-color .15s ease, transform .15s ease",
+        padding: "18px 18px 16px",
+        borderRadius: 16,
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        minHeight: 160,
+        transition: "transform .15s, border-color .15s",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "var(--line-2)";
-        e.currentTarget.style.transform = "translateY(-1px)";
+        e.currentTarget.style.transform = "translateY(-2px)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.borderColor = "var(--line)";
-        e.currentTarget.style.transform = "translateY(0)";
+        e.currentTarget.style.transform = "none";
       }}
     >
-      {/* Decorative stack lines */}
+      {/* card-stack illusion */}
       <div
         aria-hidden
         style={{
           position: "absolute",
-          right: -6,
-          top: 18,
-          height: 6,
-          width: 60,
-          borderRadius: 999,
-          background: "var(--line)",
-          opacity: 0.6,
+          inset: "-3px 10px auto 10px",
+          height: 7,
+          borderRadius: "16px 16px 0 0",
+          background: "var(--surface-1)",
+          border: "1px solid var(--line)",
+          borderBottom: 0,
         }}
       />
       <div
         aria-hidden
         style={{
           position: "absolute",
-          right: -12,
-          top: 28,
-          height: 4,
-          width: 80,
-          borderRadius: 999,
-          background: "var(--line)",
-          opacity: 0.4,
+          inset: "-6px 18px auto 18px",
+          height: 5,
+          borderRadius: "16px 16px 0 0",
+          background: "var(--bg-1)",
+          border: "1px solid var(--line)",
+          borderBottom: 0,
         }}
       />
 
-      <div className="flex items-start gap-3">
-        <DeckSwatch color={deck.color} />
-        <div className="min-w-0 flex-1">
+      {/* Colored spine */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 3,
+          background: c,
+        }}
+      />
+
+      {/* Top row: tag + due pill */}
+      <div className="flex justify-between items-start">
+        <span
+          className="mono"
+          style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.14em" }}
+        >
+          {primaryTag ? primaryTag.toUpperCase() : "DECK"} · {deck.cards_count}
+        </span>
+        {due > 0 && (
           <div
             className="mono"
-            style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
-          >
-            #{String(index + 1).padStart(2, "0")}
-          </div>
-          <h3
-            className="serif mt-1"
             style={{
-              fontSize: 20,
-              fontWeight: 500,
-              letterSpacing: "-0.02em",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              borderRadius: 999,
+              background: "var(--accent)",
+              color: "var(--accent-fg)",
+              fontSize: 11,
+              fontWeight: 600,
             }}
           >
-            {deck.name}
-          </h3>
-          {deck.description && (
-            <p
-              className="mt-1 line-clamp-1"
-              style={{ fontSize: 13, color: "var(--muted)" }}
-            >
-              {deck.description}
-            </p>
-          )}
-        </div>
+            {due} due
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-between mt-5 pt-4" style={{ borderTop: "1px solid var(--line)" }}>
-        <div className="flex items-center gap-2">
-          {deck.due_count > 0 && (
-            <span className="pill warn">{deck.due_count} due</span>
-          )}
-          {deck.new_count > 0 && (
-            <span className="pill info">{deck.new_count} new</span>
-          )}
-          {total === 0 && <span className="pill outline">caught up</span>}
-        </div>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            router.push(`/session?deck_id=${deck.id}`);
-          }}
-          className="mono flex items-center gap-1"
-          style={{
-            fontSize: 11,
-            letterSpacing: "0.08em",
-            color: "var(--accent)",
-            background: "transparent",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-          }}
-        >
-          STUDY <Icon name="arrow" size={11} />
-        </button>
+      {/* Deck name */}
+      <div
+        className="serif mt-7"
+        style={{
+          fontSize: 20,
+          fontWeight: 500,
+          lineHeight: 1.15,
+          letterSpacing: "-0.02em",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {deck.name}
       </div>
+
+      {/* Card count */}
+      <div style={{ fontSize: 12, color: "var(--muted)", marginTop: 4 }}>
+        {deck.cards_count} cards
+      </div>
+
+      {/* Colored accent bar */}
+      <div
+        style={{
+          height: 2,
+          background: c,
+          marginTop: 14,
+          opacity: 0.7,
+        }}
+      />
     </div>
   );
 }

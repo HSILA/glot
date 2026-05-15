@@ -337,7 +337,7 @@ export default function DecksPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid gap-4 md:grid-cols-2">
+        <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
           {filtered.map((deck) => (
             <DeckRowCard
               key={deck.id}
@@ -434,7 +434,8 @@ function DeckRowCard({
   const due = deck.due_count;
   const newCount = deck.new_count;
   const total = deck.cards_count;
-  const progress = total > 0 ? Math.max(0, Math.min(100, ((total - due - newCount) / total) * 100)) : 0;
+  const mastered = Math.max(0, total - due - newCount);
+  const progress = total > 0 ? Math.round((mastered / total) * 100) : 0;
 
   return (
     <div
@@ -448,20 +449,51 @@ function DeckRowCard({
           onOpen();
         }
       }}
-      className="glot-card p-5 cursor-pointer group focus-glow relative overflow-hidden"
+      className="relative cursor-pointer group overflow-hidden"
       style={{
-        transition: "border-color .15s ease, transform .15s ease",
+        padding: "24px 24px 22px",
+        borderRadius: 16,
+        background: "var(--surface)",
+        border: "1px solid var(--line)",
+        minHeight: 220,
+        transition: "transform .15s, border-color .15s",
       }}
       onMouseEnter={(e) => {
         e.currentTarget.style.borderColor = "var(--line-2)";
-        e.currentTarget.style.transform = "translateY(-1px)";
+        e.currentTarget.style.transform = "translateY(-2px)";
       }}
       onMouseLeave={(e) => {
         e.currentTarget.style.borderColor = "var(--line)";
-        e.currentTarget.style.transform = "translateY(0)";
+        e.currentTarget.style.transform = "none";
       }}
     >
-      {/* Accent bar */}
+      {/* card-stack illusion */}
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: "-3px 12px auto 12px",
+          height: 8,
+          borderRadius: "16px 16px 0 0",
+          background: "var(--surface-1)",
+          border: "1px solid var(--line)",
+          borderBottom: 0,
+        }}
+      />
+      <div
+        aria-hidden
+        style={{
+          position: "absolute",
+          inset: "-7px 22px auto 22px",
+          height: 6,
+          borderRadius: "16px 16px 0 0",
+          background: "var(--bg-1)",
+          border: "1px solid var(--line)",
+          borderBottom: 0,
+        }}
+      />
+
+      {/* Colored spine */}
       <div
         aria-hidden
         style={{
@@ -469,56 +501,71 @@ function DeckRowCard({
           left: 0,
           top: 0,
           bottom: 0,
-          width: 3,
+          width: 4,
           background: deck.color,
         }}
       />
 
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3 min-w-0 flex-1 pl-1">
+      {/* Top row: language tag + due pill */}
+      <div className="flex justify-between items-start">
+        <span
+          className="mono"
+          style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.14em" }}
+        >
+          {deck.tags && deck.tags.length > 0
+            ? deck.tags[0].toUpperCase()
+            : "DECK"}{" "}
+          · {total}
+        </span>
+        {due > 0 && (
           <div
-            className="grid place-items-center flex-shrink-0"
+            className="mono"
             style={{
-              width: 44,
-              height: 44,
-              borderRadius: 10,
-              background: `color-mix(in oklab, ${deck.color} 18%, transparent)`,
-              border: `1px solid color-mix(in oklab, ${deck.color} 30%, transparent)`,
-              color: deck.color,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              borderRadius: 999,
+              background: "var(--accent)",
+              color: "var(--accent-fg)",
+              fontSize: 11,
+              fontWeight: 600,
             }}
           >
-            <Icon name="book" size={20} />
+            {due} due
           </div>
-          <div className="min-w-0 flex-1">
-            <h3
-              className="serif"
-              style={{
-                fontSize: 20,
-                fontWeight: 500,
-                letterSpacing: "-0.02em",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {deck.name}
-            </h3>
-            <p
-              className="mt-1 line-clamp-2"
-              style={{ fontSize: 13, color: "var(--muted)" }}
-            >
-              {deck.description || "No description"}
-            </p>
-            {deck.tags && deck.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {deck.tags.slice(0, 4).map((tag) => (
-                  <span key={tag} className="pill outline">{tag}</span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+        )}
+      </div>
 
+      {/* Deck name + description */}
+      <div style={{ marginTop: 28 }}>
+        <div
+          className="serif"
+          style={{
+            fontSize: 26,
+            fontWeight: 500,
+            lineHeight: 1.1,
+            letterSpacing: "-0.02em",
+          }}
+        >
+          {deck.name}
+        </div>
+        <div
+          style={{ fontSize: 13, color: "var(--muted)", marginTop: 6, lineHeight: 1.4 }}
+        >
+          {deck.description || "No description"}
+        </div>
+      </div>
+
+      {/* Stats + menu row */}
+      <div className="flex items-center justify-between mt-4">
+        <div className="flex items-center gap-1.5">
+          {due > 0 && <span className="pill warn">{due} due</span>}
+          {newCount > 0 && <span className="pill info">{newCount} new</span>}
+          {due === 0 && newCount === 0 && (
+            <span className="pill good">caught up</span>
+          )}
+        </div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
@@ -556,67 +603,36 @@ function DeckRowCard({
         </DropdownMenu>
       </div>
 
-      {/* Stats row */}
-      <div className="flex items-center gap-2 mt-4">
-        {due > 0 && <span className="pill warn">{due} due</span>}
-        {newCount > 0 && <span className="pill info">{newCount} new</span>}
-        {due === 0 && newCount === 0 && (
-          <span className="pill good">caught up</span>
-        )}
-        <span
-          className="mono ml-auto"
-          style={{ fontSize: 11, color: "var(--muted-2)", letterSpacing: "0.04em" }}
+      {/* Progress bar at bottom */}
+      <div style={{ position: "absolute", left: 24, right: 24, bottom: 22 }}>
+        <div
+          className="mono"
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            fontSize: 10,
+            color: "var(--muted)",
+            marginBottom: 4,
+          }}
         >
-          {total} TOTAL
-        </span>
-      </div>
-
-      {/* Progress + footer */}
-      <div className="mt-4 space-y-2">
+          <span>MASTERED</span>
+          <span>{progress}%</span>
+        </div>
         <div
           style={{
-            height: 4,
-            borderRadius: 2,
+            height: 2,
             background: "var(--surface-1)",
-            overflow: "hidden",
+            borderRadius: 1,
           }}
         >
           <div
             style={{
-              height: "100%",
               width: `${progress}%`,
+              height: "100%",
               background: deck.color,
-              borderRadius: 2,
-              transition: "width .3s ease",
+              borderRadius: 1,
             }}
           />
-        </div>
-
-        <div className="flex items-center justify-between">
-          <span
-            className="mono"
-            style={{ fontSize: 11, color: "var(--muted-2)", letterSpacing: "0.04em" }}
-          >
-            {formatLastStudied(deck.last_studied_at).toUpperCase()}
-          </span>
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onStudy();
-            }}
-            className="mono flex items-center gap-1"
-            style={{
-              fontSize: 11,
-              letterSpacing: "0.08em",
-              color: "var(--accent)",
-              background: "transparent",
-              border: "none",
-              cursor: "pointer",
-              padding: 0,
-            }}
-          >
-            STUDY <Icon name="arrow" size={11} />
-          </button>
         </div>
       </div>
     </div>
