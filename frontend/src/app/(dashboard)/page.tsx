@@ -460,32 +460,6 @@ function DeckQueueCard({
         e.currentTarget.style.transform = "none";
       }}
     >
-      {/* card-stack illusion */}
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: "-3px 10px auto 10px",
-          height: 7,
-          borderRadius: "16px 16px 0 0",
-          background: "var(--surface-1)",
-          border: "1px solid var(--line)",
-          borderBottom: 0,
-        }}
-      />
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: "-6px 18px auto 18px",
-          height: 5,
-          borderRadius: "16px 16px 0 0",
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderBottom: 0,
-        }}
-      />
-
       {/* Colored spine */}
       <div
         aria-hidden

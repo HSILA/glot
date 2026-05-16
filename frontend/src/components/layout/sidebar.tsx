@@ -145,30 +145,31 @@ export function Sidebar() {
       </nav>
 
       {/* Collapse toggle — circle on the divider line */}
+      {/* Toggle button — sits ON TOP of the border between sidebar and content */}
       <button
-        type="button"
-        onClick={() => setCollapsed((c) => !c)}
-        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        onClick={() => setCollapsed(!collapsed)}
         style={{
           position: "absolute",
-          right: -10,
+          right: -12,
           top: "50%",
           transform: "translateY(-50%)",
-          width: 20,
-          height: 20,
+          width: 24,
+          height: 24,
           borderRadius: "50%",
           background: "var(--surface)",
           border: "1px solid var(--line)",
-          color: "var(--muted)",
+          color: "var(--fg)",
           display: "grid",
           placeItems: "center",
           cursor: "pointer",
-          zIndex: 10,
-          transition: "background .15s, border-color .15s, transform .15s",
+          zIndex: 50,
+          boxShadow: "0 0 0 3px var(--bg)",
+          transition: "background .15s, border-color .15s, transform .15s, box-shadow .15s",
         }}
         onMouseEnter={(e) => {
-          e.currentTarget.style.background = "var(--surface-1)";
+          e.currentTarget.style.background = "var(--bg-1)";
           e.currentTarget.style.borderColor = "var(--line-2)";
           e.currentTarget.style.transform = "translateY(-50%) scale(1.1)";
         }}
@@ -184,9 +185,11 @@ export function Sidebar() {
             placeItems: "center",
             transform: collapsed ? "rotate(0deg)" : "rotate(180deg)",
             transition: "transform .2s ease",
+            fontSize: 14,
+            lineHeight: 1,
           }}
         >
-          <Icon name="chev" size={10} />
+          ‹
         </span>
       </button>
 

@@ -467,32 +467,6 @@ function DeckRowCard({
         e.currentTarget.style.transform = "none";
       }}
     >
-      {/* card-stack illusion */}
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: "-3px 12px auto 12px",
-          height: 8,
-          borderRadius: "16px 16px 0 0",
-          background: "var(--surface-1)",
-          border: "1px solid var(--line)",
-          borderBottom: 0,
-        }}
-      />
-      <div
-        aria-hidden
-        style={{
-          position: "absolute",
-          inset: "-7px 22px auto 22px",
-          height: 6,
-          borderRadius: "16px 16px 0 0",
-          background: "var(--bg-1)",
-          border: "1px solid var(--line)",
-          borderBottom: 0,
-        }}
-      />
-
       {/* Colored spine */}
       <div
         aria-hidden
