@@ -153,7 +153,7 @@ export function Sidebar() {
         onClick={() => setCollapsed(!collapsed)}
         style={{
           position: "fixed",
-          left: width + 12,
+          left: width,
           top: "50%",
           transform: "translate(-50%, -50%)",
           width: 24,
