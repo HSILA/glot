@@ -293,29 +293,42 @@ export default function DeckDetailPage() {
 
       {/* Hero header — minimal */}
       <header className="space-y-5">
-        {/* Color bar */}
-        <div style={{ height: 4, background: deckColor, borderRadius: 2 }} />
 
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="flex-1 min-w-0">
-            {/* Mono label: first tag · DECK */}
-            <div
-              className="mono"
-              style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
-            >
-              {deck.tags?.[0]
-                ? `${deck.tags[0].toUpperCase()} · DECK`
-                : "DECK"}
-            </div>
+        {/* Mono label: first tag · DECK */}
+        <div className="flex items-center gap-1.5">
+          {/* Small colored diamond */}
+          <span
+            aria-hidden
+            style={{
+              display: "inline-block",
+              width: 8,
+              height: 8,
+              background: deckColor,
+              transform: "rotate(45deg)",
+              borderRadius: 1.5,
+              flexShrink: 0,
+            }}
+          />
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
+          >
+            {deck.tags?.[0]
+              ? `${deck.tags[0].toUpperCase()} · DECK`
+              : "DECK"}
+          </span>
+        </div>
 
-            {/* Tags */}
-            {deck.tags && deck.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-2">
-                {deck.tags.map((tag) => (
-                  <span key={tag} className="pill outline">{tag}</span>
-                ))}
-              </div>
-            )}
+        {/* Tags — only show tags beyond the first one */}
+        {deck.tags && deck.tags.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 mt-1.5">
+            {deck.tags.slice(1).map((tag) => (
+              <span key={tag} className="pill outline">{tag}</span>
+            ))}
+          </div>
+        )}
 
             {/* Title */}
             <h1
@@ -458,8 +471,8 @@ export default function DeckDetailPage() {
           />
         ) : (
           <>
-            {/* Scrollable table wrapper */}
-            <div style={{ overflowX: "auto" }}>
+            {/* Desktop table */}
+            <div className="hidden md:block" style={{ overflowX: "auto" }}>
               <div style={{ minWidth: 700 }}>
                 {/* Column headers */}
                 <div
@@ -508,6 +521,25 @@ export default function DeckDetailPage() {
                   ))}
                 </div>
               </div>
+            </div>
+
+            {/* Mobile card stack — fits width, no scrollbar */}
+            <div className="md:hidden flex flex-col gap-3">
+              {filteredCards.map((card, index) => (
+                <MobileCardRow
+                  key={card.id}
+                  card={card}
+                  index={index}
+                  onEdit={() => {
+                    setSelectedCard(card);
+                    setIsEditCardOpen(true);
+                  }}
+                  onDelete={() => {
+                    setSelectedCard(card);
+                    setIsDeleteCardOpen(true);
+                  }}
+                />
+              ))}
             </div>
 
             {/* Load more trigger */}
@@ -642,6 +674,75 @@ function EmptyCards({
 }
 
 const GRID = "60px 1fr 1.2fr 110px 90px 80px 80px 36px";
+
+function MobileCardRow({
+  card,
+  index,
+  onEdit,
+  onDelete,
+}: {
+  card: CardWithStatus;
+  index: number;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        background: index % 2 === 0 ? "var(--surface)" : "var(--bg-1)",
+        display: "flex",
+        gap: 10,
+        alignItems: "flex-start",
+      }}
+    >
+      {/* SEQ + status */}
+      <div className="flex flex-col items-start gap-1.5 flex-shrink-0" style={{ minWidth: 52 }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+          #{card.sequence}
+        </span>
+        <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
+          {card.statusText}
+        </span>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="serif truncate" style={{ fontSize: 16, fontWeight: 500 }}>
+          {card.front_content}
+        </div>
+        <div className="truncate mt-1" style={{ fontSize: 13, color: "var(--fg-1)" }}>
+          {card.back_content}
+        </div>
+      </div>
+
+      {/* Menu */}
+      <div className="flex-shrink-0">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon">
+              <Icon name="more" size={14} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              Due {formatDueRelative(card.next_review_at)}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              Created {formatDateShort(card.created_at)}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive" onSelect={onDelete}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
 
 function CardRow({
   card,

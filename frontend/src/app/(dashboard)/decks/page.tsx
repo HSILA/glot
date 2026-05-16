@@ -193,8 +193,33 @@ export default function DecksPage() {
 
   return (
     <div className="max-w-5xl mx-auto space-y-8 pb-8">
-      {/* Editorial header */}
-      <header>
+      {/* Mobile header — compact: "Decks" + accent plus button */}
+      <div className="flex items-center justify-between md:hidden">
+        <span
+          className="serif"
+          style={{ fontSize: 36, fontWeight: 500, letterSpacing: "-0.03em" }}
+        >
+          Decks
+        </span>
+        <button
+          onClick={() => setIsCreateDeckOpen(true)}
+          aria-label="New deck"
+          className="grid place-items-center rounded-full"
+          style={{
+            width: 36,
+            height: 36,
+            background: "var(--accent)",
+            color: "var(--accent-fg)",
+            border: "none",
+            cursor: "pointer",
+          }}
+        >
+          <Icon name="plus" size={16} />
+        </button>
+      </div>
+
+      {/* Desktop header */}
+      <header className="hidden md:block">
         <div className="flex flex-col md:flex-row md:items-end md:justify-between gap-4">
           <div>
             <div
@@ -228,10 +253,10 @@ export default function DecksPage() {
         </div>
       </header>
 
-      {/* Quick-study CTA */}
+      {/* Quick-study CTA — desktop only */}
       {totalToday > 0 && (
         <div
-          className="glot-card p-5 flex flex-col sm:flex-row items-start sm:items-center gap-4"
+          className="hidden md:flex glot-card p-5 flex-col sm:flex-row items-start sm:items-center gap-4"
           style={{
             background:
               "linear-gradient(to right, color-mix(in oklab, var(--accent) 6%, var(--surface)), var(--surface))",
@@ -268,9 +293,9 @@ export default function DecksPage() {
         </div>
       )}
 
-      {/* Search + sort row */}
+      {/* Search + sort row — desktop only */}
       {decks.length > 0 && (
-        <div className="flex flex-col sm:flex-row gap-3">
+        <div className="hidden md:flex flex-col sm:flex-row gap-3">
           <div className="relative flex-1">
             <Icon
               name="search"
