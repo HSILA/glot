@@ -146,17 +146,16 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* Collapse toggle — circle on the divider line */}
-      {/* Toggle button — sits ON TOP of the border between sidebar and content */}
+      {/* Toggle button — position: fixed escapes the sidebar clipping */}
       <button
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         onClick={() => setCollapsed(!collapsed)}
         style={{
-          position: "absolute",
-          right: -12,
+          position: "fixed",
+          left: width + 12,
           top: "50%",
-          transform: "translateY(-50%)",
+          transform: "translate(-50%, -50%)",
           width: 24,
           height: 24,
           borderRadius: "50%",
@@ -166,19 +165,19 @@ export function Sidebar() {
           display: "grid",
           placeItems: "center",
           cursor: "pointer",
-          zIndex: 50,
+          zIndex: 60,
           boxShadow: "0 0 0 3px var(--bg)",
-          transition: "background .15s, border-color .15s, transform .15s, box-shadow .15s",
+          transition: "left .2s ease, background .15s, border-color .15s, transform .15s",
         }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = "var(--bg-1)";
           e.currentTarget.style.borderColor = "var(--line-2)";
-          e.currentTarget.style.transform = "translateY(-50%) scale(1.1)";
+          e.currentTarget.style.transform = "translate(-50%, -50%) scale(1.1)";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.background = "var(--surface)";
           e.currentTarget.style.borderColor = "var(--line)";
-          e.currentTarget.style.transform = "translateY(-50%) scale(1)";
+          e.currentTarget.style.transform = "translate(-50%, -50%) scale(1)";
         }}
       >
         <span
