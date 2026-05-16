@@ -50,7 +50,7 @@ export function Sidebar() {
 
   return (
     <aside
-      className="hidden md:flex flex-col fixed left-0 top-0 h-screen overflow-hidden"
+      className="hidden md:flex flex-col fixed left-0 top-0 h-screen"
       style={{
         width,
         minWidth: width,
@@ -60,6 +60,8 @@ export function Sidebar() {
         transition: "width .2s ease, min-width .2s ease, max-width .2s ease",
         flexShrink: 0,
         zIndex: 30,
+        overflowX: "visible",
+        overflowY: "auto",
       }}
     >
       {/* Logo */}
