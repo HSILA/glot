@@ -50,11 +50,13 @@ export function Sidebar() {
 
   return (
     <aside
-      className="hidden md:flex flex-col fixed left-0 top-0 h-screen"
+      className="hidden md:flex flex-col fixed left-0 top-0 bottom-0"
       style={{
         width,
         minWidth: width,
         maxWidth: width,
+        top: 0,
+        bottom: 0,
         background: "var(--bg-1)",
         borderRight: "1px solid var(--line)",
         transition: "width .2s ease, min-width .2s ease, max-width .2s ease",
@@ -184,7 +186,7 @@ export function Sidebar() {
           style={{
             display: "grid",
             placeItems: "center",
-            transform: collapsed ? "rotate(0deg)" : "rotate(180deg)",
+            transform: collapsed ? "rotate(180deg)" : "rotate(0deg)",
             transition: "transform .2s ease",
             fontSize: 14,
             lineHeight: 1,
