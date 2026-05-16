@@ -85,6 +85,7 @@ export default function DeckDetailPage() {
   const [isEditCardOpen, setIsEditCardOpen] = useState(false);
   const [isDeleteCardOpen, setIsDeleteCardOpen] = useState(false);
   const [stateFilter, setStateFilter] = useState<CardState | "all">("all");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const handleEditCardOpenChange = (open: boolean) => {
     setIsEditCardOpen(open);
@@ -207,12 +208,17 @@ export default function DeckDetailPage() {
   }, [hasMore, loadCards]);
 
   const deckColor = deck?.color || "#88d4ff";
-  const total = totalCards ?? cards.length;
-  const progress = useMemo(() => {
-    if (!deck || deck.cards_count === 0) return 0;
-    const done = deck.cards_count - deck.due_count - deck.new_count;
-    return Math.max(0, Math.min(100, (done / deck.cards_count) * 100));
-  }, [deck]);
+
+  const filteredCards = useMemo(() => {
+    if (!searchQuery.trim()) return cards;
+    const q = searchQuery.toLowerCase();
+    return cards.filter(
+      (c) =>
+        c.front_content.toLowerCase().includes(q) ||
+        c.back_content.toLowerCase().includes(q) ||
+        c.tags?.some((t) => t.toLowerCase().includes(q))
+    );
+  }, [cards, searchQuery]);
 
   if (Number.isNaN(deckId)) {
     return (
@@ -268,178 +274,141 @@ export default function DeckDetailPage() {
     { value: "relearning", label: "Relearning" },
   ];
 
+  const mastered = Math.max(0, deck.cards_count - deck.due_count - deck.new_count);
+
   return (
-    <div className="max-w-5xl mx-auto space-y-8 pb-8">
-      {/* Breadcrumb / back */}
-      <div className="flex items-center gap-2">
+    <div className="max-w-5xl mx-auto pb-12">
+      {/* Back button */}
+      <div className="py-4">
         <Button
           variant="ghost"
           size="sm"
-          className="gap-2"
+          className="gap-1.5"
           onClick={() => router.push("/decks")}
         >
-          <Icon name="arrowL" size={14} />
+          <Icon name="arrowL" size={12} />
           Decks
         </Button>
       </div>
 
-      {/* Deck header */}
-      <header
-        className="glot-card relative overflow-hidden p-6 md:p-8"
-        style={{
-          background: `linear-gradient(135deg, color-mix(in oklab, ${deckColor} 8%, var(--surface)) 0%, var(--surface) 60%)`,
-        }}
-      >
-        <div
-          aria-hidden
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 0,
-            bottom: 0,
-            width: 4,
-            background: deckColor,
-          }}
-        />
+      {/* Hero header — minimal */}
+      <header className="space-y-5">
+        {/* Color bar */}
+        <div style={{ height: 4, background: deckColor, borderRadius: 2 }} />
 
-        <div className="flex items-start gap-4 flex-wrap">
-          <div
-            className="grid place-items-center flex-shrink-0"
-            style={{
-              width: 60,
-              height: 60,
-              borderRadius: 12,
-              background: `color-mix(in oklab, ${deckColor} 20%, transparent)`,
-              border: `1px solid color-mix(in oklab, ${deckColor} 35%, transparent)`,
-              color: deckColor,
-            }}
-          >
-            <Icon name="book" size={26} />
-          </div>
-
+        <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="flex-1 min-w-0">
+            {/* Mono label: first tag · DECK */}
             <div
               className="mono"
               style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
             >
-              DECK
+              {deck.tags?.[0]
+                ? `${deck.tags[0].toUpperCase()} · DECK`
+                : "DECK"}
             </div>
-            <h1
-              className="serif mt-1"
-              style={{
-                fontSize: "clamp(28px, 4vw, 40px)",
-                fontWeight: 500,
-                lineHeight: 1.05,
-                letterSpacing: "-0.02em",
-              }}
-            >
-              {deck.name}
-            </h1>
-            {deck.description && (
-              <p
-                className="mt-2 max-w-2xl"
-                style={{ fontSize: 14, color: "var(--muted)" }}
-              >
-                {deck.description}
-              </p>
-            )}
+
+            {/* Tags */}
             {deck.tags && deck.tags.length > 0 && (
-              <div className="flex flex-wrap gap-1.5 mt-3">
+              <div className="flex flex-wrap gap-1.5 mt-2">
                 {deck.tags.map((tag) => (
                   <span key={tag} className="pill outline">{tag}</span>
                 ))}
               </div>
             )}
+
+            {/* Title */}
+            <h1
+              className="serif mt-3"
+              style={{ fontSize: 42, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-0.02em" }}
+            >
+              {deck.name}
+            </h1>
+
+            {/* Description */}
+            {deck.description && (
+              <p
+                className="mt-2"
+                style={{ fontSize: 14, color: "var(--muted)", maxWidth: 600 }}
+              >
+                {deck.description}
+              </p>
+            )}
           </div>
 
-          <div className="flex flex-col gap-2 items-stretch sm:items-end">
+          {/* Right: Study now + more menu */}
+          <div className="flex items-center gap-2 flex-shrink-0 pt-1">
             <Button
-              className="gap-2"
+              size="lg"
               disabled={deck.due_count + deck.new_count === 0}
               onClick={() => router.push(`/session?deck_id=${deck.id}`)}
             >
-              <Icon name="play" size={14} />
-              Study deck
+              Study now
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2"
-              onClick={() => setIsNewCardOpen(true)}
-            >
-              <Icon name="plus" size={12} />
-              Add card
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <Icon name="more" size={15} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setIsNewCardOpen(true)}>
+                  Add card
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
-        {/* Stats row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-6 mt-7 pt-6"
+        {/* Stats row: 4 large numerals */}
+        <div
+          className="flex gap-8 pt-5"
           style={{ borderTop: "1px solid var(--line)" }}
         >
-          <StatCell label="Total" value={deck.cards_count} accent="var(--fg)" />
-          <StatCell label="Due" value={deck.due_count} accent="var(--warn)" />
-          <StatCell label="New" value={deck.new_count} accent="var(--info)" />
-          <div>
-            <div
-              className="mono"
-              style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
-            >
-              MASTERY
-            </div>
-            <div className="flex items-baseline gap-2 mt-2">
-              <span
-                className="numeral"
-                style={{ fontSize: 28, color: deckColor }}
-              >
-                {Math.round(progress)}
-              </span>
-              <span className="mono" style={{ fontSize: 12, color: "var(--muted)" }}>
-                %
-              </span>
-            </div>
-            <div
-              className="mt-2"
-              style={{
-                height: 3,
-                borderRadius: 2,
-                background: "var(--surface-1)",
-                overflow: "hidden",
-              }}
-            >
-              <div
-                style={{
-                  height: "100%",
-                  width: `${progress}%`,
-                  background: deckColor,
-                  borderRadius: 2,
-                  transition: "width .3s ease",
-                }}
-              />
-            </div>
-          </div>
+          <StatCell label="TOTAL" value={deck.cards_count} accent="var(--fg)" />
+          <StatCell label="DUE" value={deck.due_count} accent="var(--warn)" />
+          <StatCell label="NEW" value={deck.new_count} accent="var(--info)" />
+          <StatCell label="MASTERED" value={mastered} accent="var(--good)" />
         </div>
       </header>
 
-      {/* Cards section */}
-      <section className="space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-          <div>
-            <div
-              className="mono"
-              style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.12em" }}
-            >
-              CARDS
-            </div>
-            <h2
-              className="serif mt-0.5"
-              style={{ fontSize: 26, fontWeight: 500, letterSpacing: "-0.02em" }}
-            >
-              {total} {total === 1 ? "card" : "cards"}
-            </h2>
+      {/* Cards table — no section heading */}
+      <section className="mt-10 space-y-4">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div
+            className="flex items-center gap-2 px-3"
+            style={{
+              maxWidth: 320,
+              flex: "1 1 180px",
+              height: 36,
+              border: "1px solid var(--line)",
+              borderRadius: 8,
+              background: "var(--surface)",
+            }}
+          >
+            <Icon
+              name="search"
+              size={13}
+              style={{ color: "var(--muted)", flexShrink: 0 }}
+            />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search cards..."
+              style={{
+                flex: 1,
+                fontSize: 13,
+                background: "transparent",
+                outline: "none",
+                border: "none",
+                color: "var(--fg)",
+              }}
+            />
           </div>
 
-          {/* State filter pills */}
+          {/* Filter pills — unchanged */}
           <div className="flex flex-wrap gap-1.5">
             {filters.map((f) => {
               const active = stateFilter === f.value;
@@ -462,6 +431,16 @@ export default function DeckDetailPage() {
               );
             })}
           </div>
+
+          <div className="flex items-center gap-2 ml-auto">
+            <Button variant="ghost" size="sm">
+              Sort: Recent
+            </Button>
+            <Button size="sm" className="gap-2" onClick={() => setIsNewCardOpen(true)}>
+              <Icon name="plus" size={12} />
+              New card
+            </Button>
+          </div>
         </div>
 
         {/* Cards content */}
@@ -472,44 +451,63 @@ export default function DeckDetailPage() {
               Try again
             </Button>
           </div>
-        ) : cards.length === 0 && !isLoadingCards ? (
-          <EmptyCards onCreate={() => setIsNewCardOpen(true)} hasFilter={stateFilter !== "all"} />
+        ) : filteredCards.length === 0 && !isLoadingCards ? (
+          <EmptyCards
+            onCreate={() => setIsNewCardOpen(true)}
+            hasFilter={stateFilter !== "all" || searchQuery.length > 0}
+          />
         ) : (
           <>
-            {/* Column header */}
-            <div
-              className="hidden md:grid mono px-5 py-2"
-              style={{
-                gridTemplateColumns: "60px 1fr 110px 110px 100px 40px",
-                fontSize: 10,
-                color: "var(--muted-2)",
-                letterSpacing: "0.1em",
-                gap: 16,
-              }}
-            >
-              <span>#</span>
-              <span>CARD</span>
-              <span>STATE</span>
-              <span>DUE</span>
-              <span>EASE / IVL</span>
-              <span></span>
-            </div>
+            {/* Scrollable table wrapper */}
+            <div style={{ overflowX: "auto" }}>
+              <div style={{ minWidth: 700 }}>
+                {/* Column headers */}
+                <div
+                  className="mono px-4 py-2"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "60px 1fr 1.2fr 110px 90px 80px 80px 36px",
+                    gap: 12,
+                    fontSize: 10,
+                    color: "var(--muted-2)",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  <span>SEQ</span>
+                  <span>FRONT</span>
+                  <span>BACK</span>
+                  <span>STATE</span>
+                  <span>TAGS</span>
+                  <span style={{ textAlign: "right" }}>REPS</span>
+                  <span style={{ textAlign: "right" }}>EASE</span>
+                  <span />
+                </div>
 
-            <div className="glot-card divide-y overflow-hidden p-0">
-              {cards.map((card) => (
-                <CardRow
-                  key={card.id}
-                  card={card}
-                  onEdit={() => {
-                    setSelectedCard(card);
-                    setIsEditCardOpen(true);
+                {/* Card rows */}
+                <div
+                  style={{
+                    border: "1px solid var(--line)",
+                    borderRadius: 8,
+                    overflow: "hidden",
                   }}
-                  onDelete={() => {
-                    setSelectedCard(card);
-                    setIsDeleteCardOpen(true);
-                  }}
-                />
-              ))}
+                >
+                  {filteredCards.map((card, index) => (
+                    <CardRow
+                      key={card.id}
+                      card={card}
+                      index={index}
+                      onEdit={() => {
+                        setSelectedCard(card);
+                        setIsEditCardOpen(true);
+                      }}
+                      onDelete={() => {
+                        setSelectedCard(card);
+                        setIsDeleteCardOpen(true);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
             </div>
 
             {/* Load more trigger */}
@@ -582,16 +580,16 @@ function StatCell({
   return (
     <div>
       <div
-        className="mono"
-        style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
-      >
-        {label.toUpperCase()}
-      </div>
-      <div
-        className="numeral mt-2"
-        style={{ fontSize: 28, color: accent, lineHeight: 1 }}
+        className="numeral"
+        style={{ fontSize: 32, color: accent, lineHeight: 1 }}
       >
         {value}
+      </div>
+      <div
+        className="mono mt-1"
+        style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
+      >
+        {label}
       </div>
     </div>
   );
@@ -643,100 +641,100 @@ function EmptyCards({
   );
 }
 
+const GRID = "60px 1fr 1.2fr 110px 90px 80px 80px 36px";
+
 function CardRow({
   card,
+  index,
   onEdit,
   onDelete,
 }: {
   card: CardWithStatus;
+  index: number;
   onEdit: () => void;
   onDelete: () => void;
 }) {
+  const easeColor =
+    card.difficulty > 2.5
+      ? "var(--good)"
+      : card.difficulty > 1
+        ? "var(--warn)"
+        : "var(--muted)";
+
   return (
     <div
-      className="px-5 py-4 grid items-start gap-3 md:gap-4 md:items-center"
+      className="grid items-center px-4"
       style={{
-        gridTemplateColumns: "minmax(0, 1fr) auto",
+        gridTemplateColumns: GRID,
+        gap: 12,
+        minHeight: 52,
+        background: index % 2 === 0 ? "var(--surface)" : "var(--bg-1)",
+        borderBottom: "1px solid var(--line)",
       }}
     >
-      <div
-        className="md:grid md:items-center"
-        style={{
-          gridTemplateColumns: "60px 1fr 110px 110px 100px",
-          gap: 16,
-        }}
-      >
-        {/* Sequence */}
-        <div
-          className="mono hidden md:block"
-          style={{ fontSize: 12, color: "var(--muted-2)", fontFeatureSettings: '"tnum"' }}
-        >
-          #{card.sequence}
-        </div>
-
-        {/* Content */}
-        <div className="min-w-0">
-          <p
-            className="font-medium truncate"
-            style={{ fontSize: 14, color: "var(--fg)" }}
-          >
-            {card.front_content}
-          </p>
-          <p
-            className="mt-1 line-clamp-1"
-            style={{ fontSize: 13, color: "var(--muted)" }}
-          >
-            {card.back_content}
-          </p>
-          {card.tags && card.tags.length > 0 && (
-            <div className="flex flex-wrap gap-1.5 mt-2">
-              {card.tags.slice(0, 3).map((tag) => (
-                <span key={tag} className="pill outline">{tag}</span>
-              ))}
-              {card.tags.length > 3 && (
-                <span className="pill outline">+{card.tags.length - 3}</span>
-              )}
-            </div>
-          )}
-        </div>
-
-        {/* State */}
-        <div className="mt-2 md:mt-0">
-          <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
-            {card.statusText}
-          </span>
-        </div>
-
-        {/* Due */}
-        <div
-          className="mono mt-1 md:mt-0"
-          style={{ fontSize: 12, color: "var(--muted)" }}
-        >
-          <span className="md:hidden" style={{ marginRight: 6, color: "var(--muted-2)" }}>
-            Due:
-          </span>
-          {formatDueRelative(card.next_review_at)}
-        </div>
-
-        {/* Ease / Interval */}
-        <div
-          className="mono mt-1 md:mt-0"
-          style={{ fontSize: 11, color: "var(--muted-2)", whiteSpace: "nowrap" }}
-        >
-          D {card.difficulty.toFixed(1)} · S {card.stability.toFixed(1)}
-        </div>
+      {/* SEQ */}
+      <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+        #{card.sequence}
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-1">
+      {/* FRONT */}
+      <div
+        className="serif truncate"
+        style={{ fontSize: 18, fontWeight: 500 }}
+      >
+        {card.front_content}
+      </div>
+
+      {/* BACK */}
+      <div className="truncate" style={{ fontSize: 13, color: "var(--fg-1)" }}>
+        {card.back_content}
+      </div>
+
+      {/* STATE */}
+      <div>
+        <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
+          {card.statusText}
+        </span>
+      </div>
+
+      {/* TAGS */}
+      <div className="flex gap-1 overflow-hidden">
+        {card.tags?.slice(0, 2).map((tag) => (
+          <span key={tag} className="pill outline" style={{ fontSize: 9 }}>
+            {tag}
+          </span>
+        ))}
+      </div>
+
+      {/* REPS */}
+      <div
+        className="mono"
+        style={{ fontSize: 12, color: "var(--muted)", textAlign: "right" }}
+      >
+        {card.reps}
+      </div>
+
+      {/* EASE */}
+      <div
+        className="mono"
+        style={{ fontSize: 12, color: easeColor, textAlign: "right" }}
+      >
+        {card.difficulty.toFixed(1)}
+      </div>
+
+      {/* Menu */}
+      <div>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="icon">
-              <Icon name="more" size={15} />
+              <Icon name="more" size={14} />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              Due {formatDueRelative(card.next_review_at)}
+            </DropdownMenuItem>
             <DropdownMenuItem disabled>
               Created {formatDateShort(card.created_at)}
             </DropdownMenuItem>
