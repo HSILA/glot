@@ -59,7 +59,7 @@ export function Sidebar() {
         borderRight: "1px solid var(--line)",
         transition: "width .2s ease, min-width .2s ease, max-width .2s ease",
         flexShrink: 0,
-        zIndex: 30,
+        zIndex: 50,
         overflowX: "visible",
         overflowY: "auto",
       }}
