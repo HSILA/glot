@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/glot/icon";
@@ -51,9 +50,11 @@ export default function SessionPage() {
     console.log("Rated:", rating);
   };
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (skip when focus is in an input/textarea/select)
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
       if (e.code === "Space") {
         e.preventDefault();
         handleFlip();
@@ -88,12 +89,12 @@ export default function SessionPage() {
         }}
       >
         <div className="max-w-3xl mx-auto flex items-center justify-between gap-4 px-4 md:px-6 h-14">
-          <Link href="/" className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="gap-2">
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" className="gap-2" onClick={() => window.history.back()}>
               <Icon name="close" size={14} />
               <span className="hidden sm:inline">Exit</span>
             </Button>
-          </Link>
+          </div>
 
           <div className="flex items-center gap-4">
             <div

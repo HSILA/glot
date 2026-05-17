@@ -36,7 +36,7 @@ export function BottomNav() {
       style={{
         flexShrink: 0,
         height: 78,
-        paddingBottom: 18,
+        paddingBottom: "calc(18px + env(safe-area-inset-bottom, 0px))",
         paddingTop: 10,
         borderTop: "1px solid var(--line)",
         background: "color-mix(in oklab, var(--bg-1) 92%, transparent)",

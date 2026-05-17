@@ -204,10 +204,11 @@ export default function DecksPage() {
         <button
           onClick={() => setIsCreateDeckOpen(true)}
           aria-label="New deck"
-          className="grid place-items-center rounded-full"
+          className="grid place-items-center"
           style={{
-            width: 36,
+            width: 44,
             height: 36,
+            borderRadius: 10,
             background: "var(--accent)",
             color: "var(--accent-fg)",
             border: "none",
@@ -362,7 +363,7 @@ export default function DecksPage() {
           </Button>
         </div>
       ) : (
-        <div className="grid gap-[18px] md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-[18px] grid-cols-2 lg:grid-cols-3">
           {filtered.map((deck) => (
             <DeckRowCard
               key={deck.id}

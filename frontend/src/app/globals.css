@@ -200,10 +200,10 @@ a { color: inherit; text-decoration: none; }
 }
 .pill.accent { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
 .pill.outline { background: transparent; }
-.pill.warn { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 30%, transparent); background: color-mix(in oklab, var(--warn) 10%, transparent); }
-.pill.good { color: var(--good); border-color: color-mix(in oklab, var(--good) 30%, transparent); background: color-mix(in oklab, var(--good) 10%, transparent); }
-.pill.bad  { color: var(--bad);  border-color: color-mix(in oklab, var(--bad) 30%, transparent);  background: color-mix(in oklab, var(--bad) 10%, transparent); }
-.pill.info { color: var(--info); border-color: color-mix(in oklab, var(--info) 30%, transparent); background: color-mix(in oklab, var(--info) 10%, transparent); }
+.pill.warn { color: var(--warn); border-color: color-mix(in oklab, var(--warn) 65%, transparent); background: color-mix(in oklab, var(--warn) 10%, transparent); }
+.pill.good { color: var(--good); border-color: color-mix(in oklab, var(--good) 65%, transparent); background: color-mix(in oklab, var(--good) 10%, transparent); }
+.pill.bad  { color: var(--bad);  border-color: color-mix(in oklab, var(--bad) 65%, transparent);  background: color-mix(in oklab, var(--bad) 10%, transparent); }
+.pill.info { color: var(--info); border-color: color-mix(in oklab, var(--info) 65%, transparent); background: color-mix(in oklab, var(--info) 10%, transparent); }
 
 /* Buttons (shared with shadcn) */
 .btn {

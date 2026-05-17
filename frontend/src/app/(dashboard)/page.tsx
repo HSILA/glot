@@ -97,6 +97,22 @@ export default function MyDayPage() {
     return { totalDue, totalNew, activeDecks };
   }, [decks]);
 
+  const todayTotal = stats.totalDue + stats.totalNew;
+
+  // SPACE key — start session
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (e.code === "Space" && todayTotal > 0) {
+        e.preventDefault();
+        router.push("/session");
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [todayTotal, router]);
+
   const recentDecks = useMemo(() => {
     return [...decks]
       .filter((d) => d.last_studied_at)
@@ -140,8 +156,6 @@ export default function MyDayPage() {
       </div>
     );
   }
-
-  const todayTotal = stats.totalDue + stats.totalNew;
 
   return (
     <div className="max-w-5xl mx-auto space-y-12 pb-8">
@@ -228,15 +242,16 @@ export default function MyDayPage() {
                 </span>
               </div>
             </div>
-            <button
+            <Button
               onClick={() => router.push("/session")}
               disabled={todayTotal === 0}
-              className="btn primary lg pulse"
-              style={{ padding: "20px 32px", fontSize: 17, gap: 12 }}
+              size="lg"
+              className="gap-3 pulse"
+              style={{ padding: "20px 32px", fontSize: 17 }}
             >
               <Icon name="play" size={18} /> Start session
               <span className="mono" style={{ fontSize: 11, opacity: 0.6, marginLeft: 4 }}>SPACE</span>
-            </button>
+            </Button>
           </div>
         </div>
       </section>
@@ -345,7 +360,7 @@ export default function MyDayPage() {
             className="mt-2 mx-auto max-w-md"
             style={{ color: "var(--muted)", fontSize: 14 }}
           >
-            Decks hold cards. Cards flow through the FSRS scheduler to keep you sharp.
+            Decks hold cards. Cards flow through our smart scheduler to keep you sharp — for any topic, not just languages.
           </p>
           <Button className="mt-6 gap-2" onClick={() => router.push("/decks")}>
             <Icon name="plus" size={14} />

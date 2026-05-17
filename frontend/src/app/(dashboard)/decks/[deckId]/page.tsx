@@ -279,7 +279,7 @@ export default function DeckDetailPage() {
   return (
     <div className="max-w-5xl mx-auto pb-12">
       {/* Back button */}
-      <div className="py-4">
+      <div className="flex items-center justify-between py-4">
         <Button
           variant="ghost"
           size="sm"
@@ -289,6 +289,21 @@ export default function DeckDetailPage() {
           <Icon name="arrowL" size={12} />
           Decks
         </Button>
+        {/* Mobile-only "..." menu */}
+        <div className="md:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Icon name="more" size={15} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setIsNewCardOpen(true)}>
+                Add card
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Hero header — minimal */}
@@ -321,15 +336,6 @@ export default function DeckDetailPage() {
           </span>
         </div>
 
-        {/* Tags — only show tags beyond the first one */}
-        {deck.tags && deck.tags.length > 1 && (
-          <div className="flex flex-wrap gap-1.5 mt-1.5">
-            {deck.tags.slice(1).map((tag) => (
-              <span key={tag} className="pill outline">{tag}</span>
-            ))}
-          </div>
-        )}
-
             {/* Title */}
             <h1
               className="serif mt-3"
@@ -349,10 +355,10 @@ export default function DeckDetailPage() {
             )}
           </div>
 
-          {/* Right: Study now + more menu */}
-          <div className="flex items-center gap-2 flex-shrink-0 pt-1">
+          {/* Right: Study now + more menu — desktop only */}
+          <div className="hidden md:flex items-center gap-2 flex-shrink-0">
             <Button
-              size="lg"
+              className="h-9"
               disabled={deck.due_count + deck.new_count === 0}
               onClick={() => router.push(`/session?deck_id=${deck.id}`)}
             >
@@ -383,6 +389,18 @@ export default function DeckDetailPage() {
           <StatCell label="NEW" value={deck.new_count} accent="var(--info)" />
           <StatCell label="MASTERED" value={mastered} accent="var(--good)" />
         </div>
+
+        {/* Mobile: full-width Study now button below stats */}
+        <div className="md:hidden">
+          <Button
+            size="lg"
+            className="w-full"
+            disabled={deck.due_count + deck.new_count === 0}
+            onClick={() => router.push(`/session?deck_id=${deck.id}`)}
+          >
+            Study now
+          </Button>
+        </div>
       </header>
 
       {/* Cards table — no section heading */}
@@ -391,7 +409,7 @@ export default function DeckDetailPage() {
         <div className="flex flex-wrap items-center gap-3">
           {/* Search */}
           <div
-            className="flex items-center gap-2 px-3"
+            className="hidden md:flex items-center gap-2 px-3"
             style={{
               maxWidth: 320,
               flex: "1 1 180px",
@@ -445,7 +463,7 @@ export default function DeckDetailPage() {
             })}
           </div>
 
-          <div className="flex items-center gap-2 ml-auto">
+          <div className="hidden md:flex items-center gap-2 ml-auto">
             <Button variant="ghost" size="sm">
               Sort: Recent
             </Button>
@@ -454,6 +472,20 @@ export default function DeckDetailPage() {
               New card
             </Button>
           </div>
+        </div>
+
+        {/* Mobile: Cards label + New card row */}
+        <div className="md:hidden flex items-center justify-between">
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
+          >
+            CARDS
+          </span>
+          <Button size="sm" className="gap-2" onClick={() => setIsNewCardOpen(true)}>
+            <Icon name="plus" size={12} />
+            New card
+          </Button>
         </div>
 
         {/* Cards content */}
@@ -678,8 +710,8 @@ const GRID = "60px 1fr 1.2fr 110px 90px 80px 80px 36px";
 function MobileCardRow({
   card,
   index,
-  onEdit,
-  onDelete,
+  onEdit: _onEdit,
+  onDelete: _onDelete,
 }: {
   card: CardWithStatus;
   index: number;
@@ -695,16 +727,13 @@ function MobileCardRow({
         background: index % 2 === 0 ? "var(--surface)" : "var(--bg-1)",
         display: "flex",
         gap: 10,
-        alignItems: "flex-start",
+        alignItems: "stretch",
       }}
     >
-      {/* SEQ + status */}
-      <div className="flex flex-col items-start gap-1.5 flex-shrink-0" style={{ minWidth: 52 }}>
+      {/* SEQ — centered vertically */}
+      <div className="flex items-center justify-center flex-shrink-0" style={{ minWidth: 40 }}>
         <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
           #{card.sequence}
-        </span>
-        <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
-          {card.statusText}
         </span>
       </div>
 
@@ -718,27 +747,11 @@ function MobileCardRow({
         </div>
       </div>
 
-      {/* Menu */}
-      <div className="flex-shrink-0">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon">
-              <Icon name="more" size={14} />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
-            <DropdownMenuItem disabled>
-              Due {formatDueRelative(card.next_review_at)}
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled>
-              Created {formatDateShort(card.created_at)}
-            </DropdownMenuItem>
-            <DropdownMenuItem className="text-destructive" onSelect={onDelete}>
-              Delete
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+      {/* Status pill — top-right */}
+      <div className="flex-shrink-0 flex items-start">
+        <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
+          {card.statusText}
+        </span>
       </div>
     </div>
   );
@@ -801,7 +814,21 @@ function CardRow({
       {/* TAGS */}
       <div className="flex gap-1 overflow-hidden">
         {card.tags?.slice(0, 2).map((tag) => (
-          <span key={tag} className="pill outline" style={{ fontSize: 9 }}>
+          <span
+            key={tag}
+            style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+              padding: "2px 7px",
+              borderRadius: 999,
+              border: "1px solid var(--line)",
+              background: "transparent",
+              color: "var(--fg-1)",
+              whiteSpace: "nowrap",
+            }}
+          >
             {tag}
           </span>
         ))}

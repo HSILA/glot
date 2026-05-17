@@ -107,8 +107,8 @@ export default function LoginPage() {
             className="leading-relaxed max-w-[480px]"
             style={{ fontSize: 17, color: "var(--muted)" }}
           >
-            Spaced repetition, FSRS-tuned. An agent that turns your reading into
-            cards. Study sessions that don't feel like chores.
+            A memory engine that adapts to how you learn. Remember anything
+            — languages, facts, concepts — in minutes a day.
           </p>
           <div
             className="flex gap-6 mt-10 text-sm"
@@ -123,7 +123,7 @@ export default function LoginPage() {
                   background: "var(--accent)",
                 }}
               />
-              FSRS scheduling
+              Science-backed scheduling
             </div>
             <div className="flex items-center gap-2">
               <div
@@ -134,7 +134,7 @@ export default function LoginPage() {
                   background: "var(--accent)",
                 }}
               />
-              Agentic card builder
+              Smart card creation
             </div>
             <div className="flex items-center gap-2">
               <div
@@ -145,7 +145,7 @@ export default function LoginPage() {
                   background: "var(--accent)",
                 }}
               />
-              PWA — offline
+              Learn anything
             </div>
           </div>
         </div>

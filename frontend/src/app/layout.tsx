@@ -5,9 +5,9 @@ import { AuthProvider } from "@/components/providers/auth-provider";
 import { Toaster } from "@/components/ui/sonner";
 
 export const metadata: Metadata = {
-  title: "Glot — Spaced Repetition Learning",
+  title: "Glot — Remember anything, in minutes a day",
   description:
-    "A personal spaced-repetition PWA using the FSRS algorithm for efficient learning.",
+    "A personal learning companion that adapts to how your memory works — for languages, facts, and anything worth knowing.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
