@@ -2,9 +2,27 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
+function isSafeNext(value: string | null | undefined): value is string {
+  if (!value) return false;
+  if (!value.startsWith("/")) return false;
+  // Reject protocol-relative ("//evil.com") and backslash tricks ("/\evil.com").
+  if (value.startsWith("//") || value.startsWith("/\\")) return false;
+  if (value.includes("\\")) return false;
+  return true;
+}
+
+/**
+ * Returns the redirect target for an authenticated user hitting an auth page.
+ * Exported for unit testing; not part of the middleware public API.
+ */
+export function resolveAuthPageRedirect(searchParams: URLSearchParams): string {
+  const next = searchParams.get("next");
+  return isSafeNext(next) ? next : "/";
+}
+
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
-  
+
   // Check for access_token cookie
   const accessToken = request.cookies.get('access_token')?.value
 
@@ -13,8 +31,9 @@ export function proxy(request: NextRequest) {
   const isAuthPage = pathname.startsWith('/login') || pathname.startsWith('/register')
 
   if (isAuthPage && accessToken) {
-    // Redirect to dashboard
-    return NextResponse.redirect(new URL('/', request.url))
+    // Honor a safe `next` param so /login?next=/decks → /decks, not /.
+    const target = resolveAuthPageRedirect(request.nextUrl.searchParams)
+    return NextResponse.redirect(new URL(target, request.url))
   }
 
   // Optional: Protect other routes
