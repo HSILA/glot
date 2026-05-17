@@ -129,10 +129,10 @@ describe("fetchWithAuth", () => {
     expect(calls[0].init?.credentials).toBe("include");
   });
 
-  test("on 401/403, refreshes once and retries", async () => {
+  test("on 401, refreshes once and retries", async () => {
     installWindow();
     installFetch(
-      () => new Response(null, { status: 403 }),
+      () => new Response(null, { status: 401 }),
       (call) => {
         expect(call.url).toBe("/api/v1/auth/refresh");
         expect(call.init?.method).toBe("POST");
@@ -151,11 +151,11 @@ describe("fetchWithAuth", () => {
     expect(getReplacedUrls()).toEqual([]);
   });
 
-  test("redirects to /login?next=<current> when refresh fails after 401/403", async () => {
+  test("redirects to /login?next=<current> when refresh fails after 401", async () => {
     installWindow("/decks/42", "?tab=cards");
     installFetch(
       () => new Response(null, { status: 401 }),
-      () => new Response(null, { status: 403 }),
+      () => new Response(null, { status: 401 }),
     );
 
     const res = await fetchWithAuth("/api/v1/decks/42");
@@ -163,6 +163,16 @@ describe("fetchWithAuth", () => {
     expect(getReplacedUrls()).toEqual([
       `/login?next=${encodeURIComponent("/decks/42?tab=cards")}`,
     ]);
+  });
+
+  test("403 passes through without refresh or login redirect", async () => {
+    installWindow("/decks/42");
+    installFetch(() => new Response(null, { status: 403 }));
+
+    const res = await fetchWithAuth("/api/v1/resources/42/download-url");
+    expect(res.status).toBe(403);
+    expect(calls.length).toBe(1);
+    expect(getReplacedUrls()).toEqual([]);
   });
 
   test("does not redirect when redirectOnAuthFailure=false", async () => {

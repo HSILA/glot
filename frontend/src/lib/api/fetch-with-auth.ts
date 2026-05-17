@@ -1,10 +1,14 @@
 /**
  * Centralized authenticated fetch.
  *
- * On a 401/403 response, transparently calls POST /api/v1/auth/refresh once and
+ * On a 401 response, transparently calls POST /api/v1/auth/refresh once and
  * retries the original request. Concurrent callers share a single in-flight
  * refresh promise so a burst of requests that all see auth failures will only trigger
  * one refresh round-trip.
+ *
+ * 403 responses are intentionally NOT intercepted: the backend returns 403 for
+ * authenticated users who lack access to a specific resource, so retrying or
+ * redirecting to /login would be wrong. The caller receives the 403 as-is.
  *
  * If the refresh fails, navigates to /login?next=<current path> (unless
  * `redirectOnAuthFailure: false` is supplied, which the AuthProvider uses
@@ -14,7 +18,7 @@
 
 const PUBLIC_PATHS = new Set(["/login", "/register"]);
 
-const AUTH_FAILURE_STATUSES = new Set([401, 403]);
+const AUTH_FAILURE_STATUSES = new Set([401]);
 
 let refreshPromise: Promise<boolean> | null = null;
 
