@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { Wordmark } from "@/components/glot/wordmark";
 import { Icon, type IconName } from "@/components/glot/icon";
 import { useAuth } from "@/components/providers/auth-provider";
+import { isActiveNavLink } from "@/lib/nav";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -21,11 +22,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/refinery", label: "Refinery", icon: "sparkle", chip: "AI" },
   { href: "/library", label: "Library", icon: "library" },
 ];
-
-function isActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -92,7 +88,7 @@ export function Sidebar() {
         }}
       >
         {NAV_ITEMS.map((item) => {
-          const active = isActive(pathname, item.href);
+          const active = isActiveNavLink(pathname, item.href);
           return (
             <Link
               key={item.href}

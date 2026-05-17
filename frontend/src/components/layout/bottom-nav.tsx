@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon, type IconName } from "@/components/glot/icon";
+import { isActiveNavLink } from "@/lib/nav";
 
 interface NavItem {
   href: string;
@@ -17,11 +18,6 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/refinery", label: "Refinery", icon: "sparkle", chip: "AI" },
   { href: "/library", label: "Library", icon: "library" },
 ];
-
-function isActive(pathname: string, href: string) {
-  if (href === "/") return pathname === "/";
-  return pathname === href || pathname.startsWith(`${href}/`);
-}
 
 export function BottomNav() {
   const pathname = usePathname();
@@ -45,7 +41,7 @@ export function BottomNav() {
       }}
     >
       {NAV_ITEMS.map((item) => {
-        const active = isActive(pathname, item.href);
+        const active = isActiveNavLink(pathname, item.href);
         return (
           <Link
             key={item.href}
