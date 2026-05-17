@@ -1,58 +1,68 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
-import {
-  ArrowLeft,
-  BookOpen,
-  MoreHorizontal,
-  Plus,
-  Loader2,
-} from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { Icon } from "@/components/glot/icon";
 import { decksApi, type Deck } from "@/lib/api/decks";
-import { cardsApi, type Card as FlashCard } from "@/lib/api/cards";
+import { cardsApi, type Card as FlashCard, type CardState } from "@/lib/api/cards";
 import { NewCardModal } from "@/components/cards/new-card-modal";
 import { EditCardModal } from "@/components/cards/edit-card-modal";
 import { DeleteCardModal } from "@/components/cards/delete-card-modal";
 
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 20;
 
 type CardWithStatus = FlashCard & {
   statusText: string;
-  statusColor: string;
+  statusVariant: "info" | "warn" | "good" | "bad" | "default";
 };
 
-function formatDateYYYYMMDD(value: string): string {
+function formatDateShort(value: string | null): string {
+  if (!value) return "—";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "—";
-
   const y = date.getFullYear();
   const m = String(date.getMonth() + 1).padStart(2, "0");
   const d = String(date.getDate()).padStart(2, "0");
   return `${y}-${m}-${d}`;
 }
 
-function getCardStatus(card: FlashCard): { text: string; color: string } {
+function formatDueRelative(value: string | null): string {
+  if (!value) return "—";
+  const ts = new Date(value).getTime();
+  if (Number.isNaN(ts)) return "—";
+  const diff = ts - Date.now();
+  const days = Math.round(diff / (1000 * 60 * 60 * 24));
+  if (days === 0) return "today";
+  if (days < 0) return `${Math.abs(days)}d ago`;
+  if (days === 1) return "tomorrow";
+  if (days < 30) return `in ${days}d`;
+  if (days < 365) return `in ${Math.round(days / 30)}mo`;
+  return `in ${Math.round(days / 365)}y`;
+}
+
+function getCardStatus(card: FlashCard): CardWithStatus["statusText"] extends string
+  ? { text: string; variant: CardWithStatus["statusVariant"] }
+  : never;
+function getCardStatus(card: FlashCard) {
   switch (card.state) {
     case "new":
-      return { text: "New", color: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400" };
+      return { text: "New", variant: "info" as const };
     case "learning":
-      return { text: "Learning", color: "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400" };
+      return { text: "Learning", variant: "warn" as const };
     case "review":
-      return { text: "Review", color: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400" };
+      return { text: "Review", variant: "good" as const };
     case "relearning":
-      return { text: "Relearning", color: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400" };
+      return { text: "Relearning", variant: "bad" as const };
     default:
-      return { text: "Unknown", color: "bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400" };
+      return { text: "Unknown", variant: "default" as const };
   }
 }
 
@@ -74,7 +84,13 @@ export default function DeckDetailPage() {
   const [selectedCard, setSelectedCard] = useState<FlashCard | null>(null);
   const [isEditCardOpen, setIsEditCardOpen] = useState(false);
   const [isDeleteCardOpen, setIsDeleteCardOpen] = useState(false);
+  const [stateFilter, setStateFilter] = useState<CardState | "all">("all");
+  const stateFilterRef = useRef(stateFilter);
+  const [searchQuery, setSearchQuery] = useState("");
 
+  useEffect(() => {
+    stateFilterRef.current = stateFilter;
+  }, [stateFilter]);
   const handleEditCardOpenChange = (open: boolean) => {
     setIsEditCardOpen(open);
     if (!open) setSelectedCard(null);
@@ -96,10 +112,8 @@ export default function DeckDetailPage() {
       setIsLoadingDeck(false);
       return;
     }
-
     setIsLoadingDeck(true);
     setError(null);
-
     try {
       const deckData = await decksApi.getDeck(deckId);
       setDeck(deckData);
@@ -110,63 +124,61 @@ export default function DeckDetailPage() {
     }
   }, [deckId]);
 
-  const loadCards = useCallback(async (reset = false) => {
-    // If a reset is requested while an infinite-scroll fetch is in flight,
-    // queue it and run it immediately after the current request finishes.
-    if (loadingRef.current) {
-      if (reset) {
-        pendingResetRef.current = true;
+  const loadCards = useCallback(
+    async (reset = false) => {
+      if (loadingRef.current) {
+        if (reset) pendingResetRef.current = true;
+        return;
       }
-      return;
-    }
-    if (!reset && !hasMore) return;
+      if (!reset && !hasMore) return;
 
-    loadingRef.current = true;
-    setIsLoadingCards(true);
-    setCardsError(null);
+      loadingRef.current = true;
+      setIsLoadingCards(true);
+      setCardsError(null);
 
-    const currentOffset = reset ? 0 : offset;
+      const currentOffset = reset ? 0 : offset;
 
-    try {
-      const response = await cardsApi.listCards({
-        deck_id: deckId,
-        limit: BATCH_SIZE,
-        offset: currentOffset,
-      });
+      try {
+        const response = await cardsApi.listCards({
+          deck_id: deckId,
+          limit: BATCH_SIZE,
+          offset: currentOffset,
+          ...(stateFilterRef.current !== "all" ? { state: stateFilterRef.current } : {}),
+        });
 
-      setTotalCards(response.total);
+        setTotalCards(response.total);
 
-      const cardsWithStatus = response.items.map((card) => {
-        const status = getCardStatus(card);
-        return {
-          ...card,
-          statusText: status.text,
-          statusColor: status.color,
-        };
-      });
+        const cardsWithStatus: CardWithStatus[] = response.items.map((card) => {
+          const status = getCardStatus(card);
+          return {
+            ...card,
+            statusText: status.text,
+            statusVariant: status.variant,
+          };
+        });
 
-      if (reset) {
-        setCards(cardsWithStatus);
-        setOffset(response.offset + response.items.length);
-      } else {
-        setCards((prev) => [...prev, ...cardsWithStatus]);
-        setOffset(response.offset + response.items.length);
+        if (reset) {
+          setCards(cardsWithStatus);
+          setOffset(response.offset + response.items.length);
+        } else {
+          setCards((prev) => [...prev, ...cardsWithStatus]);
+          setOffset(response.offset + response.items.length);
+        }
+
+        setHasMore(response.offset + response.items.length < response.total);
+      } catch (err) {
+        setCardsError(err instanceof Error ? err.message : "Failed to load cards");
+      } finally {
+        loadingRef.current = false;
+        setIsLoadingCards(false);
+        if (pendingResetRef.current) {
+          pendingResetRef.current = false;
+          void loadCards(true);
+        }
       }
-
-      setHasMore(response.offset + response.items.length < response.total);
-    } catch (err) {
-      setCardsError(err instanceof Error ? err.message : "Failed to load cards");
-    } finally {
-      loadingRef.current = false;
-      setIsLoadingCards(false);
-
-      if (pendingResetRef.current) {
-        pendingResetRef.current = false;
-        // Fire-and-forget; loadCards handles its own loading guard.
-        void loadCards(true);
-      }
-    }
-  }, [deckId, offset, hasMore]);
+    },
+    [deckId, offset, hasMore]
+  );
 
   useEffect(() => {
     void loadDeck();
@@ -177,14 +189,11 @@ export default function DeckDetailPage() {
       void loadCards(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [deck, isLoadingDeck]);
+  }, [deck, isLoadingDeck, stateFilter]);
 
   useEffect(() => {
     if (!loadMoreRef.current || !hasMore) return;
-
-    if (observerRef.current) {
-      observerRef.current.disconnect();
-    }
+    if (observerRef.current) observerRef.current.disconnect();
 
     observerRef.current = new IntersectionObserver(
       (entries) => {
@@ -192,24 +201,35 @@ export default function DeckDetailPage() {
           void loadCards();
         }
       },
-      { threshold: 0.1, rootMargin: "100px" }
+      { threshold: 0.1, rootMargin: "120px" }
     );
 
     observerRef.current.observe(loadMoreRef.current);
 
     return () => {
-      if (observerRef.current) {
-        observerRef.current.disconnect();
-      }
+      if (observerRef.current) observerRef.current.disconnect();
     };
   }, [hasMore, loadCards]);
 
+  const deckColor = deck?.color || "#88d4ff";
+
+  const filteredCards = useMemo(() => {
+    if (!searchQuery.trim()) return cards;
+    const q = searchQuery.toLowerCase();
+    return cards.filter(
+      (c) =>
+        c.front_content.toLowerCase().includes(q) ||
+        c.back_content.toLowerCase().includes(q) ||
+        c.tags?.some((t) => t.toLowerCase().includes(q))
+    );
+  }, [cards, searchQuery]);
+
   if (Number.isNaN(deckId)) {
     return (
-      <div className="text-center py-20">
-        <p className="text-muted-foreground">Invalid deck ID</p>
-        <Button variant="outline" className="mt-4" onClick={() => router.push("/decks")}>
-          Back to Decks
+      <div className="text-center py-32 space-y-4">
+        <p style={{ color: "var(--muted)" }}>Invalid deck ID</p>
+        <Button variant="outline" onClick={() => router.push("/decks")}>
+          Back to decks
         </Button>
       </div>
     );
@@ -217,22 +237,22 @@ export default function DeckDetailPage() {
 
   if (isLoadingDeck) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      <div className="flex items-center justify-center py-32">
+        <Loader2 className="h-6 w-6 animate-spin" style={{ color: "var(--muted)" }} />
       </div>
     );
   }
 
   if (error && !deck) {
     return (
-      <div className="text-center py-20 space-y-4">
-        <p className="text-muted-foreground">{error}</p>
+      <div className="text-center py-32 space-y-4">
+        <p style={{ color: "var(--muted)" }}>{error}</p>
         <div className="flex items-center justify-center gap-3">
           <Button variant="outline" onClick={() => void loadDeck()}>
-            Try Again
+            Try again
           </Button>
           <Button variant="ghost" onClick={() => router.push("/decks")}>
-            Back to Decks
+            Back to decks
           </Button>
         </div>
       </div>
@@ -241,170 +261,320 @@ export default function DeckDetailPage() {
 
   if (!deck) {
     return (
-      <div className="text-center py-20">
-        <p className="text-muted-foreground">Deck not found</p>
-        <Button variant="outline" className="mt-4" onClick={() => router.push("/decks")}>
-          Back to Decks
+      <div className="text-center py-32 space-y-4">
+        <p style={{ color: "var(--muted)" }}>Deck not found</p>
+        <Button variant="outline" onClick={() => router.push("/decks")}>
+          Back to decks
         </Button>
       </div>
     );
   }
 
-  const deckColor = deck.color || "#3b82f6";
+  const filters: { value: CardState | "all"; label: string }[] = [
+    { value: "all", label: "All" },
+    { value: "new", label: "New" },
+    { value: "learning", label: "Learning" },
+    { value: "review", label: "Review" },
+    { value: "relearning", label: "Relearning" },
+  ];
+
+  const mastered = Math.max(0, deck.cards_count - deck.due_count - deck.new_count);
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex items-start gap-4">
+    <div className="max-w-5xl mx-auto pb-12">
+      {/* Back button */}
+      <div className="flex items-center justify-between py-4">
         <Button
           variant="ghost"
-          size="icon"
+          size="sm"
+          className="gap-1.5"
           onClick={() => router.push("/decks")}
-          className="mt-1"
         >
-          <ArrowLeft className="h-5 w-5" />
+          <Icon name="arrowL" size={12} />
+          Decks
         </Button>
-
-        <div className="flex-1">
-          <div className="flex items-start gap-3">
-            <div
-              className="w-12 h-12 rounded-lg flex items-center justify-center flex-shrink-0"
-              style={{ backgroundColor: `${deckColor}20` }}
-            >
-              <BookOpen className="h-6 w-6" style={{ color: deckColor }} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h1 className="text-2xl md:text-3xl font-bold truncate">{deck.name}</h1>
-              {deck.description && (
-                <p className="text-muted-foreground mt-1 line-clamp-2">
-                  {deck.description}
-                </p>
-              )}
-            </div>
-          </div>
-
-          {deck.tags && deck.tags.length > 0 && (
-            <div className="flex flex-wrap gap-2 mt-3 ml-[3.75rem]">
-              {deck.tags.map((tag) => (
-                <Badge key={tag} variant="outline" className="text-xs">
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          )}
+        {/* Mobile-only "..." menu */}
+        <div className="md:hidden">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon">
+                <Icon name="more" size={15} />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem onSelect={() => setIsNewCardOpen(true)}>
+                Add card
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </div>
 
-      {/* Cards Section */}
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold">
-            Cards ({totalCards ?? cards.length})
-          </h2>
-          <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
-            <Plus className="h-4 w-4" />
-            New Card
+      {/* Hero header — minimal */}
+      <header className="space-y-5">
+
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="flex-1 min-w-0">
+        {/* Mono label: first tag · DECK */}
+        <div className="flex items-center gap-1.5">
+          {/* Small colored diamond */}
+          <span
+            aria-hidden
+            style={{
+              display: "inline-block",
+              width: 8,
+              height: 8,
+              background: deckColor,
+              transform: "rotate(45deg)",
+              borderRadius: 1.5,
+              flexShrink: 0,
+            }}
+          />
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
+          >
+            {deck.tags?.[0]
+              ? `${deck.tags[0].toUpperCase()} · DECK`
+              : "DECK"}
+          </span>
+        </div>
+
+            {/* Title */}
+            <h1
+              className="serif mt-3"
+              style={{ fontSize: 42, fontWeight: 500, lineHeight: 1.05, letterSpacing: "-0.02em" }}
+            >
+              {deck.name}
+            </h1>
+
+            {/* Description */}
+            {deck.description && (
+              <p
+                className="mt-2"
+                style={{ fontSize: 14, color: "var(--muted)", maxWidth: 600 }}
+              >
+                {deck.description}
+              </p>
+            )}
+          </div>
+
+          {/* Right: Study now + more menu — desktop only */}
+          <div className="hidden md:flex items-center gap-2 flex-shrink-0">
+            <Button
+              className="h-9"
+              disabled={deck.due_count + deck.new_count === 0}
+              onClick={() => router.push(`/session?deck_id=${deck.id}`)}
+            >
+              Study now
+            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <Icon name="more" size={15} />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => setIsNewCardOpen(true)}>
+                  Add card
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+        </div>
+
+        {/* Stats row: 4 large numerals */}
+        <div
+          className="flex gap-8 pt-5"
+          style={{ borderTop: "1px solid var(--line)" }}
+        >
+          <StatCell label="TOTAL" value={deck.cards_count} accent="var(--fg)" />
+          <StatCell label="DUE" value={deck.due_count} accent="var(--warn)" />
+          <StatCell label="NEW" value={deck.new_count} accent="var(--info)" />
+          <StatCell label="MASTERED" value={mastered} accent="var(--good)" />
+        </div>
+
+        {/* Mobile: full-width Study now button below stats */}
+        <div className="md:hidden">
+          <Button
+            size="lg"
+            className="w-full"
+            disabled={deck.due_count + deck.new_count === 0}
+            onClick={() => router.push(`/session?deck_id=${deck.id}`)}
+          >
+            Study now
+          </Button>
+        </div>
+      </header>
+
+      {/* Cards table — no section heading */}
+      <section className="mt-10 space-y-4">
+        {/* Toolbar */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div
+            className="hidden md:flex items-center gap-2 px-3"
+            style={{
+              maxWidth: 320,
+              flex: "1 1 180px",
+              height: 36,
+              border: "1px solid var(--line)",
+              borderRadius: 8,
+              background: "var(--surface)",
+            }}
+          >
+            <Icon
+              name="search"
+              size={13}
+              style={{ color: "var(--muted)", flexShrink: 0 }}
+            />
+            <input
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search cards..."
+              style={{
+                flex: 1,
+                fontSize: 13,
+                background: "transparent",
+                outline: "none",
+                border: "none",
+                color: "var(--fg)",
+              }}
+            />
+          </div>
+
+          {/* Filter pills — unchanged */}
+          <div className="flex flex-wrap gap-1.5">
+            {filters.map((f) => {
+              const active = stateFilter === f.value;
+              return (
+                <button
+                  key={f.value}
+                  onClick={() => setStateFilter(f.value)}
+                  className="pill"
+                  style={{
+                    cursor: "pointer",
+                    background: active ? "var(--accent)" : "var(--surface-1)",
+                    color: active ? "var(--accent-fg)" : "var(--fg-1)",
+                    border: active
+                      ? "1px solid transparent"
+                      : "1px solid var(--line)",
+                  }}
+                >
+                  {f.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="hidden md:flex items-center gap-2 ml-auto">
+            <Button variant="ghost" size="sm">
+              Sort: Recent
+            </Button>
+            <Button size="sm" className="gap-2" onClick={() => setIsNewCardOpen(true)}>
+              <Icon name="plus" size={12} />
+              New card
+            </Button>
+          </div>
+        </div>
+
+        {/* Mobile: Cards label + New card row */}
+        <div className="md:hidden flex items-center justify-between">
+          <span
+            className="mono"
+            style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.12em" }}
+          >
+            CARDS
+          </span>
+          <Button size="sm" className="gap-2" onClick={() => setIsNewCardOpen(true)}>
+            <Icon name="plus" size={12} />
+            New card
           </Button>
         </div>
 
+        {/* Cards content */}
         {cardsError && cards.length === 0 && !isLoadingCards ? (
-          <Card>
-            <CardContent className="py-16 text-center space-y-4">
-              <p className="text-muted-foreground">{cardsError}</p>
-              <Button
-                variant="outline"
-                onClick={() => void loadCards(true)}
-                className="gap-2"
-              >
-                Try Again
-              </Button>
-            </CardContent>
-          </Card>
-        ) : cards.length === 0 && !isLoadingCards ? (
-          <Card>
-            <CardContent className="py-16 text-center space-y-4">
-              <BookOpen className="h-10 w-10 mx-auto text-muted-foreground/50" />
-              <p className="text-muted-foreground">No cards in this deck yet.</p>
-              <Button className="gap-2" onClick={() => setIsNewCardOpen(true)}>
-                <Plus className="h-4 w-4" />
-                Add your first card
-              </Button>
-            </CardContent>
-          </Card>
+          <div className="glot-card p-12 text-center space-y-4">
+            <p style={{ color: "var(--muted)" }}>{cardsError}</p>
+            <Button variant="outline" onClick={() => void loadCards(true)}>
+              Try again
+            </Button>
+          </div>
+        ) : filteredCards.length === 0 && !isLoadingCards ? (
+          <EmptyCards
+            onCreate={() => setIsNewCardOpen(true)}
+            hasFilter={stateFilter !== "all" || searchQuery.length > 0}
+          />
         ) : (
           <>
-            <div className="space-y-3">
-              {cards.map((card) => (
-                <Card key={card.id} className="hover:shadow-md transition-shadow">
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between gap-4">
-                      {/* Left "front matter" */}
-                      <div className="w-10 flex-shrink-0 text-xs text-muted-foreground font-mono tabular-nums text-left">
-                        #{card.sequence}
-                      </div>
+            {/* Desktop table */}
+            <div className="hidden md:block" style={{ overflowX: "auto" }}>
+              <div style={{ minWidth: 700 }}>
+                {/* Column headers */}
+                <div
+                  className="mono px-4 py-2"
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "60px 1fr 1.2fr 110px 90px 80px 80px 36px",
+                    gap: 12,
+                    fontSize: 10,
+                    color: "var(--muted-2)",
+                    letterSpacing: "0.1em",
+                  }}
+                >
+                  <span>SEQ</span>
+                  <span>FRONT</span>
+                  <span>BACK</span>
+                  <span>STATE</span>
+                  <span>TAGS</span>
+                  <span style={{ textAlign: "right" }}>REPS</span>
+                  <span style={{ textAlign: "right" }}>EASE</span>
+                  <span />
+                </div>
 
-                      {/* Main content */}
-                      <div className="flex-1 min-w-0">
-                        <p className="font-medium line-clamp-2">{card.front_content}</p>
-                        <p className="text-sm text-muted-foreground mt-1 line-clamp-2">
-                          {card.back_content}
-                        </p>
+                {/* Card rows */}
+                <div
+                  style={{
+                    border: "1px solid var(--line)",
+                    borderRadius: 8,
+                    overflow: "hidden",
+                  }}
+                >
+                  {filteredCards.map((card, index) => (
+                    <CardRow
+                      key={card.id}
+                      card={card}
+                      index={index}
+                      onEdit={() => {
+                        setSelectedCard(card);
+                        setIsEditCardOpen(true);
+                      }}
+                      onDelete={() => {
+                        setSelectedCard(card);
+                        setIsDeleteCardOpen(true);
+                      }}
+                    />
+                  ))}
+                </div>
+              </div>
+            </div>
 
-                        {card.tags && card.tags.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {card.tags.slice(0, 3).map((tag) => (
-                              <Badge key={tag} variant="outline" className="text-xs">
-                                {tag}
-                              </Badge>
-                            ))}
-                            {card.tags.length > 3 && (
-                              <Badge variant="outline" className="text-xs">
-                                +{card.tags.length - 3}
-                              </Badge>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Middle (date) */}
-                      <div className="w-28 flex-shrink-0 text-center text-xs text-muted-foreground tabular-nums">
-                        {formatDateYYYYMMDD(card.created_at)}
-                      </div>
-
-                      {/* Right actions */}
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <Badge className={card.statusColor}>{card.statusText}</Badge>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-8 w-8">
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem
-                              onSelect={() => {
-                                setSelectedCard(card);
-                                setIsEditCardOpen(true);
-                              }}
-                            >
-                              Edit
-                            </DropdownMenuItem>
-                            <DropdownMenuItem disabled>Export</DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="text-destructive"
-                              onSelect={() => {
-                                setSelectedCard(card);
-                                setIsDeleteCardOpen(true);
-                              }}
-                            >
-                              Delete
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    </div>
-                  </CardContent>
-                </Card>
+            {/* Mobile card stack — fits width, no scrollbar */}
+            <div className="md:hidden flex flex-col gap-3">
+              {filteredCards.map((card, index) => (
+                <MobileCardRow
+                  key={card.id}
+                  card={card}
+                  index={index}
+                  onEdit={() => {
+                    setSelectedCard(card);
+                    setIsEditCardOpen(true);
+                  }}
+                  onDelete={() => {
+                    setSelectedCard(card);
+                    setIsDeleteCardOpen(true);
+                  }}
+                />
               ))}
             </div>
 
@@ -412,38 +582,35 @@ export default function DeckDetailPage() {
             <div ref={loadMoreRef} className="py-4 space-y-3">
               {cardsError && (
                 <div className="text-center space-y-2">
-                  <p className="text-sm text-muted-foreground">{cardsError}</p>
+                  <p style={{ fontSize: 13, color: "var(--muted)" }}>{cardsError}</p>
                   <Button
                     variant="outline"
                     size="sm"
                     onClick={() => void loadCards()}
                     disabled={isLoadingCards}
                   >
-                    Try Again
+                    Try again
                   </Button>
                 </div>
               )}
 
               {isLoadingCards && (
                 <div className="flex items-center justify-center">
-                  <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                  <Loader2 className="h-5 w-5 animate-spin" style={{ color: "var(--muted)" }} />
                 </div>
               )}
 
-              {/* Fallback button in case IntersectionObserver doesn't fire */}
               {hasMore && !isLoadingCards && !cardsError && cards.length > 0 && (
                 <div className="flex justify-center">
-                  <Button variant="outline" onClick={() => void loadCards()}>
+                  <Button variant="outline" size="sm" onClick={() => void loadCards()}>
                     Load more
                   </Button>
                 </div>
               )}
-
-              {/* When we've reached the end, don't show extra text. */}
             </div>
           </>
         )}
-      </div>
+      </section>
 
       <NewCardModal
         open={isNewCardOpen}
@@ -465,6 +632,267 @@ export default function DeckDetailPage() {
         card={selectedCard}
         onDeleted={() => void loadCards(true)}
       />
+    </div>
+  );
+}
+
+function StatCell({
+  label,
+  value,
+  accent,
+}: {
+  label: string;
+  value: number;
+  accent: string;
+}) {
+  return (
+    <div>
+      <div
+        className="numeral"
+        style={{ fontSize: 32, color: accent, lineHeight: 1 }}
+      >
+        {value}
+      </div>
+      <div
+        className="mono mt-1"
+        style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.1em" }}
+      >
+        {label}
+      </div>
+    </div>
+  );
+}
+
+function EmptyCards({
+  onCreate,
+  hasFilter,
+}: {
+  onCreate: () => void;
+  hasFilter: boolean;
+}) {
+  return (
+    <div className="glot-card p-12 text-center">
+      <div
+        className="inline-flex items-center justify-center mb-5"
+        style={{
+          width: 56,
+          height: 56,
+          borderRadius: 12,
+          background: "var(--surface-1)",
+          border: "1px solid var(--line)",
+          color: "var(--accent)",
+        }}
+      >
+        <Icon name="book" size={24} />
+      </div>
+      <h3
+        className="serif"
+        style={{ fontSize: 22, fontWeight: 500 }}
+      >
+        {hasFilter ? "No cards in this state" : "No cards in this deck yet"}
+      </h3>
+      <p
+        className="mt-2 mx-auto max-w-md"
+        style={{ color: "var(--muted)", fontSize: 14 }}
+      >
+        {hasFilter
+          ? "Try a different filter, or add new cards to this deck."
+          : "Add your first card to begin studying."}
+      </p>
+      {!hasFilter && (
+        <Button className="mt-6 gap-2" onClick={onCreate}>
+          <Icon name="plus" size={14} />
+          Add card
+        </Button>
+      )}
+    </div>
+  );
+}
+
+const GRID = "60px 1fr 1.2fr 110px 90px 80px 80px 36px";
+
+function MobileCardRow({
+  card,
+  index,
+  onEdit,
+  onDelete,
+}: {
+  card: CardWithStatus;
+  index: number;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div
+      style={{
+        padding: "12px 14px",
+        border: "1px solid var(--line)",
+        borderRadius: 10,
+        background: index % 2 === 0 ? "var(--surface)" : "var(--bg-1)",
+        display: "flex",
+        gap: 10,
+        alignItems: "stretch",
+      }}
+    >
+      {/* SEQ — centered vertically */}
+      <div className="flex items-center justify-center flex-shrink-0" style={{ minWidth: 40 }}>
+        <span className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+          #{card.sequence}
+        </span>
+      </div>
+
+      {/* Content */}
+      <div className="flex-1 min-w-0">
+        <div className="serif truncate" style={{ fontSize: 16, fontWeight: 500 }}>
+          {card.front_content}
+        </div>
+        <div className="truncate mt-1" style={{ fontSize: 13, color: "var(--fg-1)" }}>
+          {card.back_content}
+        </div>
+      </div>
+
+      {/* Status pill — top-right */}
+      <div className="flex-shrink-0 flex items-start">
+        <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
+          {card.statusText}
+        </span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex-shrink-0 flex items-start">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon">
+              <Icon name="more" size={14} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive" onSelect={onDelete}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
+  );
+}
+
+function CardRow({
+  card,
+  index,
+  onEdit,
+  onDelete,
+}: {
+  card: CardWithStatus;
+  index: number;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const easeColor =
+    card.difficulty > 2.5
+      ? "var(--good)"
+      : card.difficulty > 1
+        ? "var(--warn)"
+        : "var(--muted)";
+
+  return (
+    <div
+      className="grid items-center px-4"
+      style={{
+        gridTemplateColumns: GRID,
+        gap: 12,
+        minHeight: 52,
+        background: index % 2 === 0 ? "var(--surface)" : "var(--bg-1)",
+        borderBottom: "1px solid var(--line)",
+      }}
+    >
+      {/* SEQ */}
+      <div className="mono" style={{ fontSize: 11, color: "var(--muted)" }}>
+        #{card.sequence}
+      </div>
+
+      {/* FRONT */}
+      <div
+        className="serif truncate"
+        style={{ fontSize: 18, fontWeight: 500 }}
+      >
+        {card.front_content}
+      </div>
+
+      {/* BACK */}
+      <div className="truncate" style={{ fontSize: 13, color: "var(--fg-1)" }}>
+        {card.back_content}
+      </div>
+
+      {/* STATE */}
+      <div>
+        <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
+          {card.statusText}
+        </span>
+      </div>
+
+      {/* TAGS */}
+      <div className="flex gap-1 overflow-hidden">
+        {card.tags?.slice(0, 2).map((tag) => (
+          <span
+            key={tag}
+            style={{
+              fontSize: 9,
+              fontFamily: "var(--mono)",
+              textTransform: "uppercase",
+              letterSpacing: "0.04em",
+              padding: "2px 7px",
+              borderRadius: 999,
+              border: "1px solid var(--line)",
+              background: "transparent",
+              color: "var(--fg-1)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {tag}
+          </span>
+        ))}
+      </div>
+
+      {/* REPS */}
+      <div
+        className="mono"
+        style={{ fontSize: 12, color: "var(--muted)", textAlign: "right" }}
+      >
+        {card.reps}
+      </div>
+
+      {/* EASE */}
+      <div
+        className="mono"
+        style={{ fontSize: 12, color: easeColor, textAlign: "right" }}
+      >
+        {card.difficulty.toFixed(1)}
+      </div>
+
+      {/* Menu */}
+      <div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon">
+              <Icon name="more" size={14} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              Due {formatDueRelative(card.next_review_at)}
+            </DropdownMenuItem>
+            <DropdownMenuItem disabled>
+              Created {formatDateShort(card.created_at)}
+            </DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive" onSelect={onDelete}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </div>
   );
 }

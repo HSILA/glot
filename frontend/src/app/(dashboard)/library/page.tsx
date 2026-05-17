@@ -12,13 +12,6 @@ import {
   Globe,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { ResourceCard } from "@/components/resources/resource-card";
 import { UploadModal } from "@/components/resources/upload-modal";
 import {
@@ -195,19 +188,57 @@ export default function LibraryPage() {
 
   const currentResources = activeTab === "my" ? filteredMyResources : publicResources;
 
-  const renderEmptyState = () => {
+  // --- Tab pill component ---
+  const TabPill = ({
+    value,
+    label,
+    icon: Icon,
+  }: {
+    value: string;
+    label: string;
+    icon: typeof BookOpen;
+  }) => {
+    const isActive = activeTab === value;
+    return (
+      <button
+        onClick={() => setActiveTab(value as "my" | "public")}
+        className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+        style={{
+          background: isActive ? "var(--surface-2)" : "transparent",
+          color: isActive ? "var(--fg)" : "var(--muted)",
+        }}
+      >
+        <Icon size={15} />
+        {label}
+      </button>
+    );
+  };
+
+  // --- Empty state ---
+  const EmptyState = () => {
     if (activeTab === "my") {
       return (
-        <div className="text-center py-20">
-          <BookOpen className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-          <p className="text-muted-foreground">
+        <div
+          className="text-center py-20"
+          style={{ color: "var(--muted)" }}
+        >
+          <BookOpen
+            className="mx-auto mb-4 opacity-30"
+            size={48}
+            style={{ color: "var(--muted-2)" }}
+          />
+          <p className="text-base">
             {searchQuery
               ? "No resources match your search"
               : "No resources yet. Upload your first PDF!"}
           </p>
           {!searchQuery && (
-            <Button className="mt-4" onClick={() => setIsUploadOpen(true)}>
-              <Plus className="h-4 w-4 mr-2" />
+            <Button
+              variant="primary"
+              className="mt-4 gap-2"
+              onClick={() => setIsUploadOpen(true)}
+            >
+              <Plus size={14} />
               Add Resource
             </Button>
           )}
@@ -215,9 +246,16 @@ export default function LibraryPage() {
       );
     }
     return (
-      <div className="text-center py-20">
-        <Globe className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
-        <p className="text-muted-foreground">
+      <div
+        className="text-center py-20"
+        style={{ color: "var(--muted)" }}
+      >
+        <Globe
+          className="mx-auto mb-4 opacity-30"
+          size={48}
+          style={{ color: "var(--muted-2)" }}
+        />
+        <p className="text-base">
           {debouncedSearch
             ? "No public resources match your search"
             : "No public resources available yet"}
@@ -226,100 +264,56 @@ export default function LibraryPage() {
     );
   };
 
-  const renderResourceGrid = () => (
-    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 md:gap-6">
-      {currentResources.map((resource) => (
-        <ResourceCard
-          key={resource.id}
-          resource={resource}
-          viewMode="grid"
-          isMyLibrary={activeTab === "my"}
-          onExtract={activeTab === "my" ? handleExtract : undefined}
-          onDelete={activeTab === "my" ? handleDelete : undefined}
-          onToggleVisibility={
-            activeTab === "my" ? handleToggleVisibility : undefined
-          }
-          onResourceUpdated={
-            activeTab === "my" ? handleResourceUpdated : undefined
-          }
-          onAddToLibrary={activeTab === "public" ? handleAddToLibrary : undefined}
-          extractionProgress={
-            activeTab === "my" ? extractionProgress[resource.id] : undefined
-          }
-        />
-      ))}
-    </div>
-  );
-
-  const renderResourceList = () => (
-    <div className="space-y-3">
-      {currentResources.map((resource) => (
-        <ResourceCard
-          key={resource.id}
-          resource={resource}
-          viewMode="list"
-          isMyLibrary={activeTab === "my"}
-          onExtract={activeTab === "my" ? handleExtract : undefined}
-          onDelete={activeTab === "my" ? handleDelete : undefined}
-          onToggleVisibility={
-            activeTab === "my" ? handleToggleVisibility : undefined
-          }
-          onResourceUpdated={
-            activeTab === "my" ? handleResourceUpdated : undefined
-          }
-          onAddToLibrary={activeTab === "public" ? handleAddToLibrary : undefined}
-          extractionProgress={
-            activeTab === "my" ? extractionProgress[resource.id] : undefined
-          }
-        />
-      ))}
-    </div>
-  );
-
   return (
-    <div className="space-y-6 max-w-6xl mx-auto">
-      {/* Page Header */}
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold">Library</h1>
-          <p className="text-muted-foreground">
-            {activeTab === "my"
-              ? `${myResources.length} ${myResources.length === 1 ? "resource" : "resources"} in your collection`
-              : "Discover resources shared by the community"}
-          </p>
-        </div>
+    <div style={{ padding: "32px clamp(20px, 5vw, 56px)", maxWidth: 1080, margin: "0 auto" }}>
+      {/* === Header === */}
+      <div className="flex items-end justify-between mb-7">
+        <h1
+          className="tracking-tight"
+          style={{
+            fontFamily: "var(--serif)",
+            fontSize: 36,
+            fontWeight: 500,
+            letterSpacing: "-0.03em",
+          }}
+        >
+          Library
+        </h1>
         {activeTab === "my" && (
           <Button
-            className="gap-2 w-full md:w-auto"
+            variant="primary"
+            className="gap-2 hidden sm:inline-flex"
             onClick={() => setIsUploadOpen(true)}
           >
-            <Plus className="h-4 w-4" />
-            Add Resource
+            <Plus size={14} />
+            Add source
           </Button>
         )}
       </div>
 
-      {/* Tabs */}
-      <Tabs
-        value={activeTab}
-        onValueChange={(v) => setActiveTab(v as "my" | "public")}
-      >
-        <TabsList className="grid w-full max-w-md grid-cols-2">
-          <TabsTrigger value="my" className="gap-2">
-            <BookOpen className="h-4 w-4" />
-            My Library
-          </TabsTrigger>
-          <TabsTrigger value="public" className="gap-2">
-            <Globe className="h-4 w-4" />
-            Public Library
-          </TabsTrigger>
-        </TabsList>
+      {/* === Tabs + Search bar === */}
+      <div className="flex flex-col gap-4 mb-6">
+        {/* Tab pills */}
+        <div
+          className="flex gap-1 p-1 rounded-xl border max-w-fit"
+          style={{
+            background: "var(--surface)",
+            borderColor: "var(--line)",
+          }}
+        >
+          <TabPill value="my" label="My Library" icon={BookOpen} />
+          <TabPill value="public" label="Public Library" icon={Globe} />
+        </div>
 
-        {/* Search and Filters */}
-        <div className="flex flex-col sm:flex-row gap-3 mt-4">
+        {/* Search + filters */}
+        <div className="flex gap-3 items-center">
           {/* Search */}
-          <div className="relative flex-1">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <div className="relative flex-1 max-w-md">
+            <Search
+              className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
+              size={15}
+              style={{ color: "var(--muted)" }}
+            />
             <input
               type="text"
               placeholder={
@@ -329,103 +323,135 @@ export default function LibraryPage() {
               }
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-10 pl-10 pr-4 rounded-lg border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              className="w-full h-10 pl-10 pr-4 rounded-lg text-sm outline-none transition-colors"
+              style={{
+                background: "var(--surface)",
+                border: "1px solid var(--line)",
+                color: "var(--fg)",
+              }}
             />
           </div>
 
-          {/* Filter & View Toggle */}
-          <div className="flex gap-2">
-            {activeTab === "my" && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button variant="outline" size="icon" className="h-10 w-10">
-                    <Filter className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem>All Resources</DropdownMenuItem>
-                  <DropdownMenuItem>Extracted</DropdownMenuItem>
-                  <DropdownMenuItem>Pending</DropdownMenuItem>
-                  <DropdownMenuItem>Public</DropdownMenuItem>
-                  <DropdownMenuItem>Private</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-
-            <div className="flex rounded-lg border border-input overflow-hidden">
-              <Button
-                variant={viewMode === "grid" ? "secondary" : "ghost"}
-                size="icon"
-                className="h-10 w-10 rounded-none"
-                onClick={() => setViewMode("grid")}
-              >
-                <Grid3X3 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant={viewMode === "list" ? "secondary" : "ghost"}
-                size="icon"
-                className="h-10 w-10 rounded-none"
-                onClick={() => setViewMode("list")}
-              >
-                <List className="h-4 w-4" />
-              </Button>
-            </div>
+          {/* View toggle */}
+          <div
+            className="flex rounded-lg border overflow-hidden"
+            style={{ borderColor: "var(--line)" }}
+          >
+            <button
+              onClick={() => setViewMode("grid")}
+              className="flex items-center justify-center w-10 h-10 transition-colors"
+              style={{
+                background: viewMode === "grid" ? "var(--surface-2)" : "transparent",
+                color: viewMode === "grid" ? "var(--fg)" : "var(--muted)",
+              }}
+            >
+              <Grid3X3 size={16} />
+            </button>
+            <button
+              onClick={() => setViewMode("list")}
+              className="flex items-center justify-center w-10 h-10 transition-colors"
+              style={{
+                background: viewMode === "list" ? "var(--surface-2)" : "transparent",
+                color: viewMode === "list" ? "var(--fg)" : "var(--muted)",
+              }}
+            >
+              <List size={16} />
+            </button>
           </div>
+
+          {/* Mobile add button */}
+          {activeTab === "my" && (
+            <Button
+              variant="primary"
+              className="sm:hidden"
+              size="icon"
+              onClick={() => setIsUploadOpen(true)}
+            >
+              <Plus size={14} />
+            </Button>
+          )}
         </div>
+      </div>
 
-        {/* Content */}
-        <TabsContent value="my" className="mt-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : error ? (
-            <div className="text-center py-20">
-              <p className="text-muted-foreground">{error}</p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={fetchMyResources}
-              >
-                Try Again
-              </Button>
-            </div>
-          ) : filteredMyResources.length === 0 ? (
-            renderEmptyState()
-          ) : viewMode === "grid" ? (
-            renderResourceGrid()
-          ) : (
-            renderResourceList()
-          )}
-        </TabsContent>
+      {/* === Content === */}
+      {isLoading ? (
+        <div className="flex items-center justify-center py-20">
+          <Loader2
+            className="animate-spin"
+            size={32}
+            style={{ color: "var(--muted-2)" }}
+          />
+        </div>
+      ) : error ? (
+        <div className="text-center py-20" style={{ color: "var(--muted)" }}>
+          <p>{error}</p>
+          <Button
+            variant="outline"
+            className="mt-4"
+            onClick={activeTab === "my" ? fetchMyResources : fetchPublicResources}
+          >
+            Try Again
+          </Button>
+        </div>
+      ) : currentResources.length === 0 ? (
+        <EmptyState />
+      ) : viewMode === "grid" ? (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-5">
+          {currentResources.map((resource) => (
+            <ResourceCard
+              key={resource.id}
+              resource={resource}
+              viewMode="grid"
+              isMyLibrary={activeTab === "my"}
+              onExtract={activeTab === "my" ? handleExtract : undefined}
+              onDelete={activeTab === "my" ? handleDelete : undefined}
+              onToggleVisibility={
+                activeTab === "my" ? handleToggleVisibility : undefined
+              }
+              onResourceUpdated={
+                activeTab === "my" ? handleResourceUpdated : undefined
+              }
+              onAddToLibrary={
+                activeTab === "public" ? handleAddToLibrary : undefined
+              }
+              extractionProgress={
+                activeTab === "my"
+                  ? extractionProgress[resource.id]
+                  : undefined
+              }
+            />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {currentResources.map((resource) => (
+            <ResourceCard
+              key={resource.id}
+              resource={resource}
+              viewMode="list"
+              isMyLibrary={activeTab === "my"}
+              onExtract={activeTab === "my" ? handleExtract : undefined}
+              onDelete={activeTab === "my" ? handleDelete : undefined}
+              onToggleVisibility={
+                activeTab === "my" ? handleToggleVisibility : undefined
+              }
+              onResourceUpdated={
+                activeTab === "my" ? handleResourceUpdated : undefined
+              }
+              onAddToLibrary={
+                activeTab === "public" ? handleAddToLibrary : undefined
+              }
+              extractionProgress={
+                activeTab === "my"
+                  ? extractionProgress[resource.id]
+                  : undefined
+              }
+            />
+          ))}
+        </div>
+      )}
 
-        <TabsContent value="public" className="mt-4">
-          {isLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            </div>
-          ) : error ? (
-            <div className="text-center py-20">
-              <p className="text-muted-foreground">{error}</p>
-              <Button
-                variant="outline"
-                className="mt-4"
-                onClick={fetchPublicResources}
-              >
-                Try Again
-              </Button>
-            </div>
-          ) : publicResources.length === 0 ? (
-            renderEmptyState()
-          ) : viewMode === "grid" ? (
-            renderResourceGrid()
-          ) : (
-            renderResourceList()
-          )}
-        </TabsContent>
-      </Tabs>
-
-      {/* Upload Modal */}
+      {/* === Upload Modal === */}
       <UploadModal
         open={isUploadOpen}
         onOpenChange={setIsUploadOpen}

@@ -1,230 +1,194 @@
 "use client";
 
-import { useState } from "react";
-import {
-  Check,
-  X,
-  MoreHorizontal,
-  Inbox,
-  FileText,
-  Sparkles,
-} from "lucide-react";
+import { Icon } from "@/components/glot/icon";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
-
-// Mock data
-const initialDrafts = [
-  {
-    id: 1,
-    type: "vocabulary",
-    front: "Ephemeral",
-    back: "Lasting for a very short time. 'The ephemeral nature of fashion trends.'",
-    source: "Philosophy 101 - Chapter 3",
-    createdAt: "2 hours ago",
-    confidence: "high",
-  },
-  {
-    id: 2,
-    type: "phrase",
-    front: "Carpe diem",
-    back: "Seize the day; enjoy the present moment without worry about the future.",
-    source: "Latin Reader",
-    createdAt: "Yesterday",
-    confidence: "medium",
-  },
-  {
-    id: 3,
-    type: "vocabulary",
-    front: "Ubiquitous",
-    back: "Present, appearing, or found everywhere. 'Smartphones have become ubiquitous.'",
-    source: "SAT Prep",
-    createdAt: "2 days ago",
-    confidence: "high",
-  },
-  {
-    id: 4,
-    type: "concept",
-    front: "Mitochondria",
-    back: "The powerhouse of the cell. Generates ATP through cellular respiration.",
-    source: "Biology Notes",
-    createdAt: "3 days ago",
-    confidence: "low",
-  },
-  {
-    id: 5,
-    type: "vocabulary",
-    front: "Serendipity",
-    back: "The occurrence of events by chance in a happy or beneficial way.",
-    source: "GRE Vocabulary",
-    createdAt: "4 days ago",
-    confidence: "medium",
-  },
-];
 
 export default function RefineryPage() {
-  const [drafts, setDrafts] = useState(initialDrafts);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-
-  const handleApprove = (id: number) => {
-    setDrafts((prev) => prev.filter((d) => d.id !== id));
-  };
-
-  const handleReject = (id: number) => {
-    setDrafts((prev) => prev.filter((d) => d.id !== id));
-  };
-
-  const getConfidenceBadge = (confidence: string) => {
-    const styles = {
-      high: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400",
-      medium:
-        "bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400",
-      low: "bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400",
-    };
-    return styles[confidence as keyof typeof styles] || styles.medium;
-  };
-
-  if (drafts.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
-        <div className="w-20 h-20 rounded-full bg-primary/10 flex items-center justify-center mb-6">
-          <Sparkles className="h-10 w-10 text-primary" />
-        </div>
-        <h2 className="text-2xl font-semibold mb-2">All Caught Up!</h2>
-        <p className="text-muted-foreground max-w-md">
-          Your refinery is empty. New draft cards will appear here when you
-          highlight text while reading.
-        </p>
-        <Button className="mt-6" variant="outline">
-          Learn More
-        </Button>
-      </div>
-    );
-  }
-
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
-      {/* Page Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold flex items-center gap-3">
-            <Inbox className="h-7 w-7 text-primary" />
-            Refinery
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            {drafts.length} items waiting for review
-          </p>
-        </div>
-        <Button variant="outline" size="sm" className="gap-2">
-          <Check className="h-4 w-4" />
-          Approve All
-        </Button>
-      </div>
-
-      {/* Draft Cards */}
-      <div className="space-y-3">
-        {drafts.map((draft) => (
-          <Card
-            key={draft.id}
-            className={cn(
-              "overflow-hidden transition-all duration-300",
-              expandedId === draft.id && "ring-2 ring-primary"
-            )}
-          >
-            <CardHeader className="p-4 pb-2">
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex items-center gap-2 flex-wrap">
-                  <Badge variant="secondary" className="text-xs">
-                    {draft.type}
-                  </Badge>
-                  <Badge
-                    className={cn(
-                      "text-xs border-0",
-                      getConfidenceBadge(draft.confidence)
-                    )}
-                  >
-                    {draft.confidence} confidence
-                  </Badge>
-                </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
-                      <MoreHorizontal className="h-4 w-4" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end">
-                    <DropdownMenuItem>Edit</DropdownMenuItem>
-                    <DropdownMenuItem>Change Deck</DropdownMenuItem>
-                    <DropdownMenuItem className="text-destructive">
-                      Delete
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </CardHeader>
-
-            <CardContent className="p-4 pt-0">
-              {/* Front */}
-              <div
-                className="cursor-pointer"
-                onClick={() =>
-                  setExpandedId(expandedId === draft.id ? null : draft.id)
-                }
+    <div className="max-w-5xl mx-auto pb-8">
+      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_300px]">
+        <main className="min-h-[calc(100vh-220px)] flex flex-col">
+          <div className="mb-7">
+            <div className="flex items-center gap-2 mb-2">
+              <Icon name="sparkle" size={18} style={{ color: "var(--accent)" }} />
+              <span
+                className="mono"
+                style={{
+                  fontSize: 11,
+                  color: "var(--accent)",
+                  letterSpacing: "0.14em",
+                }}
               >
-                <h3 className="font-serif text-lg font-semibold mb-2">
-                  {draft.front}
-                </h3>
+                REFINERY
+              </span>
+              <span className="pill" style={{ fontSize: 10, padding: "2px 7px" }}>
+                SOON
+              </span>
+            </div>
+            <h1
+              className="serif"
+              style={{
+                fontSize: "clamp(34px, 5vw, 52px)",
+                fontWeight: 500,
+                letterSpacing: "-0.03em",
+                lineHeight: 1.05,
+                marginBottom: 10,
+              }}
+            >
+              Turn anything into <span style={{ fontStyle: "italic", color: "var(--muted)" }}>flashcards.</span>
+            </h1>
+            <p style={{ color: "var(--muted)", fontSize: 16, lineHeight: 1.55, maxWidth: 760 }}>
+              Drop a PDF, paste a URL, or dump messy notes. The chat interface is being built and will be available here soon.
+            </p>
+          </div>
 
-                {/* Back - conditionally shown */}
-                {expandedId === draft.id && (
-                  <div className="mt-3 pt-3 border-t border-border">
-                    <p className="text-muted-foreground font-serif leading-relaxed">
-                      {draft.back}
-                    </p>
+          <div className="flex-1 flex flex-col justify-end gap-5">
+            <div className="flex gap-3">
+              <div
+                className="grid place-items-center flex-shrink-0"
+                style={{
+                  width: 34,
+                  height: 34,
+                  borderRadius: 10,
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                }}
+              >
+                <Icon name="sparkle" size={15} style={{ color: "var(--accent)" }} />
+              </div>
+              <div style={{ flex: 1 }}>
+                <div
+                  className="mono"
+                  style={{
+                    fontSize: 10,
+                    color: "var(--muted)",
+                    letterSpacing: "0.1em",
+                    marginBottom: 8,
+                  }}
+                >
+                  REFINERY · UNDER DEVELOPMENT
+                </div>
+                <div
+                  className="glot-card p-5"
+                  style={{
+                    background:
+                      "linear-gradient(135deg, color-mix(in oklab, var(--accent) 7%, var(--surface)), var(--surface))",
+                  }}
+                >
+                  <div className="serif mb-2" style={{ fontSize: 22, fontWeight: 500 }}>
+                    This feature is under development.
                   </div>
-                )}
-              </div>
-
-              {/* Source & Actions */}
-              <div className="flex items-center justify-between mt-4 pt-3 border-t border-border/50">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <FileText className="h-3 w-3" />
-                  <span>{draft.source}</span>
-                  <span>&middot;</span>
-                  <span>{draft.createdAt}</span>
-                </div>
-
-                {/* Action Buttons */}
-                <div className="flex gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-8 gap-1 text-destructive hover:text-destructive hover:bg-destructive/10"
-                    onClick={() => handleReject(draft.id)}
-                  >
-                    <X className="h-4 w-4" />
-                    <span className="hidden sm:inline">Reject</span>
-                  </Button>
-                  <Button
-                    size="sm"
-                    className="h-8 gap-1"
-                    onClick={() => handleApprove(draft.id)}
-                  >
-                    <Check className="h-4 w-4" />
-                    <span className="hidden sm:inline">Approve</span>
-                  </Button>
+                  <p style={{ color: "var(--muted)", lineHeight: 1.6, margin: 0 }}>
+                    No generated cards or mock-up data are shown yet. When Refinery is ready, this space will become the assistant chat for creating cards from sources.
+                  </p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        ))}
+            </div>
+
+            <div style={{ paddingTop: 20 }}>
+              <div
+                style={{
+                  border: "1px solid var(--line-2)",
+                  borderRadius: 16,
+                  background: "var(--surface)",
+                  padding: 4,
+                  opacity: 0.68,
+                }}
+              >
+                <textarea
+                  disabled
+                  placeholder="Paste a URL, drop a PDF, or describe what you want…"
+                  style={{
+                    width: "100%",
+                    minHeight: 62,
+                    padding: "14px 16px",
+                    background: "transparent",
+                    fontSize: 14,
+                    color: "var(--fg)",
+                    resize: "none",
+                    lineHeight: 1.5,
+                    cursor: "not-allowed",
+                  }}
+                />
+                <div className="flex items-center gap-2 px-3 py-2">
+                  <Button disabled variant="ghost" size="sm" className="gap-2">
+                    <Icon name="upload" size={13} />
+                    Attach
+                  </Button>
+                  <Button disabled variant="ghost" size="sm" className="gap-2">
+                    <Icon name="pdf" size={13} />
+                    PDF
+                  </Button>
+                  <Button disabled variant="ghost" size="sm" aria-label="Voice input">
+                    <Icon name="mic" size={13} />
+                  </Button>
+                  <span className="mono hidden sm:inline" style={{ fontSize: 10, color: "var(--muted-2)", marginLeft: 6 }}>
+                    FEATURE LOCKED
+                  </span>
+                  <div className="flex-1" />
+                  <span className="mono hidden sm:inline" style={{ fontSize: 10, color: "var(--muted)" }}>
+                    coming soon
+                  </span>
+                  <Button disabled size="sm" aria-label="Send">
+                    <Icon name="arrowU" size={13} />
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </main>
+
+        <aside
+          className="hidden lg:block"
+          style={{
+            borderLeft: "1px solid var(--line)",
+            paddingLeft: 24,
+          }}
+        >
+          <div className="mono" style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.14em", marginBottom: 12 }}>
+            STATUS
+          </div>
+          <div className="glot-card p-4 mb-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Icon name="lock" size={14} style={{ color: "var(--accent)" }} />
+              <span style={{ fontSize: 13, fontWeight: 600 }}>Refinery is not available yet</span>
+            </div>
+            <p style={{ fontSize: 12, color: "var(--muted)", lineHeight: 1.5, margin: 0 }}>
+              Sources, recent runs, and generated drafts will appear here after the feature is connected.
+            </p>
+          </div>
+
+          <div className="mono" style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.14em", marginBottom: 12 }}>
+            INPUTS
+          </div>
+          <div className="grid gap-2">
+            {[
+              ["upload", "Files"],
+              ["pdf", "PDFs"],
+              ["library", "URLs"],
+              ["edit", "Notes"],
+            ].map(([icon, label]) => (
+              <div
+                key={label}
+                className="flex items-center gap-2"
+                style={{
+                  padding: "10px 12px",
+                  borderRadius: 8,
+                  background: "var(--surface)",
+                  border: "1px solid var(--line)",
+                  color: "var(--muted)",
+                  fontSize: 13,
+                }}
+              >
+                <Icon name={icon as "upload" | "pdf" | "library" | "edit"} size={13} />
+                {label}
+                <span className="mono ml-auto" style={{ fontSize: 9, color: "var(--muted-2)" }}>
+                  soon
+                </span>
+              </div>
+            ))}
+          </div>
+        </aside>
       </div>
     </div>
   );

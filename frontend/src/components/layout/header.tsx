@@ -1,7 +1,7 @@
 "use client";
 
-import { Bell, Sun, Moon, Monitor, LogOut, User, Settings } from "lucide-react";
-import { useTheme } from "next-themes";
+import { Bell, Sun, Moon, Coffee, LogOut, User, Settings } from "lucide-react";
+import { useTweaks } from "@/components/providers/theme-provider";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -20,8 +20,14 @@ import {
 } from "@/components/ui/tooltip";
 import { useAuth } from "@/components/providers/auth-provider";
 
+const themeIcons: Record<string, typeof Sun> = {
+  light: Sun,
+  dark: Moon,
+  sepia: Coffee,
+};
+
 export function Header() {
-  const { setTheme } = useTheme();
+  const { theme, setTheme } = useTweaks();
   const { user, logout } = useAuth();
 
   const handleLogout = async () => {
@@ -41,6 +47,8 @@ export function Header() {
     }
     return user.email[0].toUpperCase();
   };
+
+  const ThemeIcon = themeIcons[theme] ?? Moon;
 
   return (
     <header className="sticky top-0 z-40 w-full border-b border-border/50 bg-background/80 backdrop-blur-sm supports-[backdrop-filter]:bg-background/60">
@@ -62,8 +70,7 @@ export function Header() {
                 <TooltipTrigger asChild>
                   <DropdownMenuTrigger asChild>
                     <Button variant="ghost" size="icon" className="h-9 w-9">
-                      <Sun className="h-4 w-4 rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
-                      <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
+                      <ThemeIcon className="h-4 w-4" />
                       <span className="sr-only">Toggle theme</span>
                     </Button>
                   </DropdownMenuTrigger>
@@ -75,13 +82,13 @@ export function Header() {
                   <Sun className="mr-2 h-4 w-4" />
                   Light
                 </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => setTheme("sepia")}>
+                  <Coffee className="mr-2 h-4 w-4" />
+                  Sepia
+                </DropdownMenuItem>
                 <DropdownMenuItem onClick={() => setTheme("dark")}>
                   <Moon className="mr-2 h-4 w-4" />
                   Dark
-                </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => setTheme("system")}>
-                  <Monitor className="mr-2 h-4 w-4" />
-                  System
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

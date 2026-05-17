@@ -1,88 +1,273 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Library, FlaskConical, Layers } from "lucide-react";
+import { Wordmark } from "@/components/glot/wordmark";
+import { Icon, type IconName } from "@/components/glot/icon";
+import { useAuth } from "@/components/providers/auth-provider";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { Separator } from "@/components/ui/separator";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
 interface NavItem {
   href: string;
   label: string;
-  icon: React.ComponentType<{ className?: string }>;
+  icon: IconName;
+  chip?: string;
 }
 
-const navItems: NavItem[] = [
-  { href: "/", label: "My Day", icon: Home },
-  { href: "/library", label: "Library", icon: Library },
-  { href: "/refinery", label: "Refinery", icon: FlaskConical },
-  { href: "/decks", label: "Decks", icon: Layers },
+const NAV_ITEMS: NavItem[] = [
+  { href: "/", label: "My Day", icon: "home" },
+  { href: "/decks", label: "Decks", icon: "layers" },
+  { href: "/refinery", label: "Refinery", icon: "sparkle", chip: "AI" },
+  { href: "/library", label: "Library", icon: "library" },
 ];
+
+function isActive(pathname: string, href: string) {
+  if (href === "/") return pathname === "/";
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
 
 export function Sidebar() {
   const pathname = usePathname();
+  const [collapsed, setCollapsed] = React.useState(false);
+  const { user } = useAuth();
 
-  const renderNavItem = (item: NavItem) => {
-    const isActive =
-      pathname === item.href ||
-      (item.href !== "/" && pathname.startsWith(item.href));
+  const width = collapsed ? 64 : 240;
 
-    return (
-      <Tooltip key={item.href}>
-        <TooltipTrigger asChild>
-          <Link href={item.href}>
-            <Button
-              variant={isActive ? "secondary" : "ghost"}
-              className={cn(
-                "w-full justify-start gap-3 h-11 px-4",
-                isActive &&
-                  "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-              )}
-            >
-              <item.icon
-                className={cn(
-                  "h-5 w-5",
-                  isActive ? "text-primary" : "text-muted-foreground"
-                )}
-              />
-              <span>{item.label}</span>
-            </Button>
-          </Link>
-        </TooltipTrigger>
-        <TooltipContent side="right" className="md:hidden">
-          {item.label}
-        </TooltipContent>
-      </Tooltip>
-    );
-  };
+  const initials = React.useMemo(() => {
+    if (!user) return "G";
+    if (user.display_name) {
+      return user.display_name
+        .split(" ")
+        .map((w) => w[0])
+        .filter(Boolean)
+        .slice(0, 2)
+        .join("")
+        .toUpperCase();
+    }
+    return user.email.slice(0, 2).toUpperCase();
+  }, [user]);
 
   return (
-    <aside className="hidden md:flex md:w-64 lg:w-72 flex-col h-screen fixed left-0 top-0 border-r border-sidebar-border bg-sidebar">
+    <aside
+      className="hidden md:flex flex-col fixed left-0 top-0 bottom-0"
+      style={{
+        width,
+        minWidth: width,
+        maxWidth: width,
+        top: 0,
+        bottom: 0,
+        background: "var(--bg-1)",
+        borderRight: "1px solid var(--line)",
+        transition: "width .2s ease, min-width .2s ease, max-width .2s ease",
+        flexShrink: 0,
+        zIndex: 50,
+        overflowX: "visible",
+        overflowY: "auto",
+      }}
+    >
       {/* Logo */}
-      <div className="p-6">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-primary to-primary/80 flex items-center justify-center shadow-lg">
-            <span className="text-primary-foreground font-bold text-xl">G</span>
-          </div>
-          <span className="font-semibold text-xl tracking-tight">Glot</span>
+      <div
+        className="flex items-center"
+        style={{
+          padding: collapsed ? "22px 12px 16px" : "22px 20px 16px",
+        }}
+      >
+        <Link
+          href="/"
+          aria-label="Glot home"
+          className="flex items-center w-full"
+          style={{ justifyContent: collapsed ? "center" : "flex-start" }}
+        >
+          {collapsed ? <Wordmark size={20} showText={false} /> : <Wordmark size={20} />}
         </Link>
       </div>
 
-      <Separator />
-
-      {/* Navigation */}
-      <nav className="flex-1 p-4 space-y-1">
-        <TooltipProvider delayDuration={0}>
-          {navItems.map((item) => renderNavItem(item))}
-        </TooltipProvider>
+      {/* Nav */}
+      <nav
+        className="flex flex-col"
+        style={{
+          padding: collapsed ? "8px 8px" : "8px 12px",
+          gap: 2,
+        }}
+      >
+        {NAV_ITEMS.map((item) => {
+          const active = isActive(pathname, item.href);
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              title={collapsed ? item.label : undefined}
+              className="relative flex items-center"
+              style={{
+                padding: collapsed ? "10px 0" : "10px 12px",
+                gap: 12,
+                borderRadius: 8,
+                background: active ? "var(--surface-1)" : "transparent",
+                color: active ? "var(--fg)" : "var(--muted)",
+                fontWeight: 500,
+                fontSize: 14,
+                justifyContent: collapsed ? "center" : "flex-start",
+                textAlign: "left",
+              }}
+            >
+              {active && (
+                <span
+                  aria-hidden
+                  style={{
+                    position: "absolute",
+                    left: collapsed ? 0 : -12,
+                    top: 8,
+                    bottom: 8,
+                    width: 2,
+                    background: "var(--accent)",
+                    borderRadius: 2,
+                  }}
+                />
+              )}
+              <Icon name={item.icon} size={17} />
+              {!collapsed && <span className="flex-1">{item.label}</span>}
+              {!collapsed && item.chip && (
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 9,
+                    fontWeight: 600,
+                    letterSpacing: "0.08em",
+                    padding: "2px 5px",
+                    borderRadius: 3,
+                    background: "var(--accent)",
+                    color: "var(--accent-fg)",
+                  }}
+                >
+                  {item.chip}
+                </span>
+              )}
+            </Link>
+          );
+        })}
       </nav>
+
+      {/* Toggle button — position: fixed escapes the sidebar clipping */}
+      <button
+        aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        onClick={() => setCollapsed(!collapsed)}
+        style={{
+          position: "fixed",
+          left: width,
+          top: "50%",
+          transform: "translate(-50%, -50%)",
+          width: 24,
+          height: 24,
+          borderRadius: "50%",
+          background: "var(--surface)",
+          border: "1px solid var(--line)",
+          color: "var(--fg)",
+          display: "grid",
+          placeItems: "center",
+          cursor: "pointer",
+          zIndex: 60,
+          boxShadow: "0 0 0 3px var(--bg)",
+          transition: "left .2s ease, background .15s, border-color .15s, transform .15s",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.background = "var(--bg-1)";
+          e.currentTarget.style.borderColor = "var(--line-2)";
+          e.currentTarget.style.transform = "translate(-50%, -50%) scale(1.1)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.background = "var(--surface)";
+          e.currentTarget.style.borderColor = "var(--line)";
+          e.currentTarget.style.transform = "translate(-50%, -50%) scale(1)";
+        }}
+      >
+        <span
+          style={{
+            display: "grid",
+            placeItems: "center",
+            transform: collapsed ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform .2s ease",
+            fontSize: 14,
+            lineHeight: 1,
+          }}
+        >
+          ‹
+        </span>
+      </button>
+
+      {/* Bottom section */}
+      <div
+        className={cn("mt-auto")}
+        style={{
+          padding: collapsed ? 8 : 16,
+          borderTop: "1px solid var(--line)",
+        }}
+      >
+        {!collapsed ? (
+          <div
+            style={{
+              padding: "12px 14px",
+              borderRadius: 10,
+              background: "var(--surface)",
+              border: "1px solid var(--line)",
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+            }}
+          >
+            <div
+              style={{
+                width: 32,
+                height: 32,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #c5a3ff, #88d4ff)",
+                display: "grid",
+                placeItems: "center",
+                fontSize: 11,
+                fontWeight: 600,
+                color: "#0a0a0b",
+              }}
+            >
+              {initials}
+            </div>
+            <div className="min-w-0 flex-1">
+              <div
+                style={{
+                  fontSize: 13,
+                  fontWeight: 500,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {user?.display_name || user?.email || "Guest"}
+              </div>
+              <div style={{ fontSize: 11, color: "var(--muted)" }}>Free plan</div>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center" style={{ gap: 10 }}>
+            <div
+              style={{
+                width: 28,
+                height: 28,
+                borderRadius: "50%",
+                background: "linear-gradient(135deg, #c5a3ff, #88d4ff)",
+                display: "grid",
+                placeItems: "center",
+                fontSize: 10,
+                fontWeight: 600,
+                color: "#0a0a0b",
+              }}
+            >
+              {initials}
+            </div>
+          </div>
+        )}
+      </div>
     </aside>
   );
 }
+
+export const SIDEBAR_DEFAULT_WIDTH = 240;
