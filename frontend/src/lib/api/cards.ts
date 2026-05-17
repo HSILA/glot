@@ -1,4 +1,5 @@
 import { parseApiError } from "@/lib/api-error";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 export type CardState = "new" | "learning" | "review" | "relearning";
 
@@ -203,7 +204,7 @@ class CardsApi {
     params.set("offset", String(options.offset ?? 0));
 
     const query = params.toString();
-    const response = await fetch(`${API_BASE}${query ? `?${query}` : ""}`, {
+    const response = await fetchWithAuth(`${API_BASE}${query ? `?${query}` : ""}`, {
       credentials: "include",
     });
 
@@ -224,7 +225,7 @@ class CardsApi {
     params.set("limit", String(options.limit ?? 20));
 
     const query = params.toString();
-    const response = await fetch(`${API_BASE}/due${query ? `?${query}` : ""}`, {
+    const response = await fetchWithAuth(`${API_BASE}/due${query ? `?${query}` : ""}`, {
       credentials: "include",
     });
 
@@ -237,7 +238,7 @@ class CardsApi {
   }
 
   async getCard(cardId: number): Promise<Card> {
-    const response = await fetch(`${API_BASE}/${cardId}`, {
+    const response = await fetchWithAuth(`${API_BASE}/${cardId}`, {
       credentials: "include",
     });
 
@@ -250,7 +251,7 @@ class CardsApi {
   }
 
   async createCard(payload: CreateCardRequest): Promise<Card> {
-    const response = await fetch(API_BASE, {
+    const response = await fetchWithAuth(API_BASE, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -272,7 +273,7 @@ class CardsApi {
       throw new Error("deck_id cannot be null. Omit deck_id to keep the current deck.");
     }
 
-    const response = await fetch(`${API_BASE}/${cardId}`, {
+    const response = await fetchWithAuth(`${API_BASE}/${cardId}`, {
       method: "PUT",
       credentials: "include",
       headers: {
@@ -290,7 +291,7 @@ class CardsApi {
   }
 
   async deleteCard(cardId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/${cardId}`, {
+    const response = await fetchWithAuth(`${API_BASE}/${cardId}`, {
       method: "DELETE",
       credentials: "include",
     });
@@ -301,7 +302,7 @@ class CardsApi {
   }
 
   async previewCard(cardId: number): Promise<NextStatesResponse> {
-    const response = await fetch(`${API_BASE}/${cardId}/preview`, {
+    const response = await fetchWithAuth(`${API_BASE}/${cardId}/preview`, {
       credentials: "include",
     });
 
@@ -314,7 +315,7 @@ class CardsApi {
   }
 
   async reviewCard(cardId: number, payload: ReviewRequest): Promise<ReviewResponse> {
-    const response = await fetch(`${API_BASE}/${cardId}/review`, {
+    const response = await fetchWithAuth(`${API_BASE}/${cardId}/review`, {
       method: "POST",
       credentials: "include",
       headers: {

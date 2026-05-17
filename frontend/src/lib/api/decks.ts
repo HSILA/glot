@@ -1,4 +1,5 @@
 import { parseApiError } from "@/lib/api-error";
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 export interface Deck {
   id: number;
@@ -89,7 +90,7 @@ class DecksApi {
     params.set("offset", String(options.offset ?? 0));
 
     const query = params.toString();
-    const response = await fetch(`${API_BASE}${query ? `?${query}` : ""}`, {
+    const response = await fetchWithAuth(`${API_BASE}${query ? `?${query}` : ""}`, {
       credentials: "include",
     });
 
@@ -102,7 +103,7 @@ class DecksApi {
   }
 
   async getDeck(deckId: number): Promise<Deck> {
-    const response = await fetch(`${API_BASE}/${deckId}`, {
+    const response = await fetchWithAuth(`${API_BASE}/${deckId}`, {
       credentials: "include",
     });
 
@@ -115,7 +116,7 @@ class DecksApi {
   }
 
   async createDeck(payload: CreateDeckRequest): Promise<Deck> {
-    const response = await fetch(API_BASE, {
+    const response = await fetchWithAuth(API_BASE, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -133,7 +134,7 @@ class DecksApi {
   }
 
   async updateDeck(deckId: number, payload: UpdateDeckRequest): Promise<Deck> {
-    const response = await fetch(`${API_BASE}/${deckId}`, {
+    const response = await fetchWithAuth(`${API_BASE}/${deckId}`, {
       method: "PUT",
       credentials: "include",
       headers: {
@@ -151,7 +152,7 @@ class DecksApi {
   }
 
   async deleteDeck(deckId: number): Promise<void> {
-    const response = await fetch(`${API_BASE}/${deckId}`, {
+    const response = await fetchWithAuth(`${API_BASE}/${deckId}`, {
       method: "DELETE",
       credentials: "include",
     });
