@@ -3,6 +3,11 @@
 import { createContext, useContext, useEffect, useState, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { parseApiError } from "@/lib/api-error";
+import {
+  buildLoginUrl,
+  fetchWithAuth,
+  isSafeNext,
+} from "@/lib/api/fetch-with-auth";
 
 interface User {
   id: number;
@@ -23,35 +28,38 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const PUBLIC_PATHS = ["/login", "/register"];
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
   const pathname = usePathname();
 
-  const publicPaths = ["/login", "/register"];
-  const isPublicPath = publicPaths.includes(pathname);
+  const isPublicPath = PUBLIC_PATHS.includes(pathname);
 
   const refreshUser = useCallback(async (): Promise<void> => {
     try {
-      const response = await fetch("/api/v1/auth/me", {
-        credentials: "include",
+      // fetchWithAuth will transparently try /auth/refresh on a 401 before
+      // surfacing the failure to us, so an expired access token alone does
+      // not log the user out.
+      const response = await fetchWithAuth("/api/v1/auth/me", {
+        redirectOnAuthFailure: false,
       });
 
       if (response.ok) {
         const userData = await response.json();
         setUser(userData);
-      } else {
-        // 401 or other error - not logged in
-        // IMPORTANT: Must explicitly clear cookies via logout endpoint
-        // otherwise middleware sees the cookie and redirects back to protected route, causing loop
-        if (response.status === 401) {
-          await fetch("/api/v1/auth/logout", { method: "POST", credentials: "include" }).catch(() => {});
-        }
-        setUser(null);
+        return;
       }
+
+      // Still 401 after a refresh attempt → genuinely logged out. The
+      // backend's /auth/refresh clears auth cookies on failure, so the
+      // proxy middleware won't bounce us off /login.
+      setUser(null);
     } catch {
-      // Network error - treat as not logged in
+      // Network / parse error — treat as logged out so the UI does not get
+      // stuck on a stale user.
       setUser(null);
     }
   }, []);
@@ -70,7 +78,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     await refreshUser();
-    router.push("/");
+    // Navigation is handled by the redirect effect below, which honours
+    // `next` from the URL.
   };
 
   const logout = async () => {
@@ -80,15 +89,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         credentials: "include",
       });
     } catch {
-      // Ignore errors, still clear local state
+      // Ignore network errors; we still want to clear local state.
     }
     setUser(null);
     router.push("/login");
   };
 
-  // Check auth status on mount
-  // This allows redirecting logged-in users away from /login
-  // Note: No DB lookup if not logged in - fails at JWT check
+  // Check auth status on mount. The first /auth/me hit may 401 if the
+  // access token has expired — fetchWithAuth will refresh once before we
+  // give up, so a valid refresh token alone is enough to stay signed in.
   useEffect(() => {
     const checkAuth = async () => {
       setIsLoading(true);
@@ -96,21 +105,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(false);
     };
 
-    checkAuth();
+    void checkAuth();
   }, [refreshUser]);
 
-  // Redirect logic
+  // Redirect logic — preserve where the user was trying to go.
   useEffect(() => {
     if (isLoading) return;
 
     if (!user && !isPublicPath) {
-      router.push("/login");
-    } else if (user && isPublicPath) {
-      router.push("/");
+      const target = buildLoginUrl(pathname);
+      router.replace(target);
+      return;
     }
-  }, [user, isLoading, isPublicPath, router]);
 
-  // Show nothing while checking auth (prevents flash)
+    if (user && isPublicPath) {
+      const nextParam =
+        typeof window !== "undefined"
+          ? new URLSearchParams(window.location.search).get("next")
+          : null;
+      router.replace(isSafeNext(nextParam) ? nextParam : "/");
+    }
+  }, [user, isLoading, isPublicPath, pathname, router]);
+
   if (isLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
@@ -119,7 +135,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Don't render protected content if not authenticated
+  // Avoid flashing protected content while the redirect is in flight.
   if (!user && !isPublicPath) {
     return null;
   }

@@ -2,6 +2,8 @@
  * Resource types and API client for the resources feature.
  */
 
+import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
+
 export type ExtractionStatus = "none" | "pending" | "processing" | "completed" | "failed";
 
 export interface Resource {
@@ -61,7 +63,7 @@ export async function computeFileHash(file: File): Promise<string> {
 
 class ResourcesApi {
   async requestUpload(request: UploadRequest): Promise<UploadResponse> {
-    const res = await fetch(`${API_BASE}/upload`, {
+    const res = await fetchWithAuth(`${API_BASE}/upload`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -77,7 +79,7 @@ class ResourcesApi {
   }
 
   async confirmUpload(resourceId: number): Promise<Resource> {
-    const res = await fetch(
+    const res = await fetchWithAuth(
       `${API_BASE}/upload/confirm?resource_id=${resourceId}`,
       {
         method: "POST",
@@ -108,7 +110,7 @@ class ResourcesApi {
     limit = 50,
     offset = 0
   ): Promise<ResourceListResponse> {
-    const res = await fetch(
+    const res = await fetchWithAuth(
       `${API_BASE}?limit=${limit}&offset=${offset}`,
       {
         credentials: "include",
@@ -132,7 +134,7 @@ class ResourcesApi {
     if (search) {
       params.set("search", search);
     }
-    const res = await fetch(`${API_BASE}/public?${params}`, {
+    const res = await fetchWithAuth(`${API_BASE}/public?${params}`, {
       credentials: "include",
     });
     if (!res.ok) {
@@ -142,7 +144,7 @@ class ResourcesApi {
   }
 
   async getResource(id: number): Promise<Resource> {
-    const res = await fetch(`${API_BASE}/${id}`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}`, {
       credentials: "include",
     });
     if (!res.ok) {
@@ -152,7 +154,7 @@ class ResourcesApi {
   }
 
   async addPublicResource(id: number, name: string): Promise<Resource> {
-    const res = await fetch(`${API_BASE}/${id}/add`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}/add`, {
       method: "POST",
       credentials: "include",
       headers: {
@@ -171,7 +173,7 @@ class ResourcesApi {
     id: number,
     updates: { name?: string; is_public?: boolean }
   ): Promise<Resource> {
-    const res = await fetch(`${API_BASE}/${id}`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}`, {
       method: "PATCH",
       credentials: "include",
       headers: {
@@ -187,7 +189,7 @@ class ResourcesApi {
   }
 
   async deleteResource(id: number): Promise<void> {
-    const res = await fetch(`${API_BASE}/${id}`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}`, {
       method: "DELETE",
       credentials: "include",
     });
@@ -198,7 +200,7 @@ class ResourcesApi {
   }
 
   async triggerExtraction(id: number): Promise<void> {
-    const res = await fetch(`${API_BASE}/${id}/extract`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}/extract`, {
       method: "POST",
       credentials: "include",
     });
@@ -209,7 +211,7 @@ class ResourcesApi {
   }
 
   async getExtractionProgress(id: number): Promise<ExtractionProgress> {
-    const res = await fetch(`${API_BASE}/${id}/progress`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}/progress`, {
       credentials: "include",
     });
     if (!res.ok) {
@@ -219,7 +221,7 @@ class ResourcesApi {
   }
 
   async getDownloadUrl(id: number): Promise<string> {
-    const res = await fetch(`${API_BASE}/${id}/download`, {
+    const res = await fetchWithAuth(`${API_BASE}/${id}/download`, {
       credentials: "include",
     });
     if (!res.ok) {
