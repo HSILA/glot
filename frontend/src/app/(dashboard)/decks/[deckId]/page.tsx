@@ -85,8 +85,12 @@ export default function DeckDetailPage() {
   const [isEditCardOpen, setIsEditCardOpen] = useState(false);
   const [isDeleteCardOpen, setIsDeleteCardOpen] = useState(false);
   const [stateFilter, setStateFilter] = useState<CardState | "all">("all");
+  const stateFilterRef = useRef(stateFilter);
   const [searchQuery, setSearchQuery] = useState("");
 
+  useEffect(() => {
+    stateFilterRef.current = stateFilter;
+  }, [stateFilter]);
   const handleEditCardOpenChange = (open: boolean) => {
     setIsEditCardOpen(open);
     if (!open) setSelectedCard(null);
@@ -139,7 +143,7 @@ export default function DeckDetailPage() {
           deck_id: deckId,
           limit: BATCH_SIZE,
           offset: currentOffset,
-          ...(stateFilter !== "all" ? { state: stateFilter } : {}),
+          ...(stateFilterRef.current !== "all" ? { state: stateFilterRef.current } : {}),
         });
 
         setTotalCards(response.total);
@@ -173,7 +177,7 @@ export default function DeckDetailPage() {
         }
       }
     },
-    [deckId, offset, hasMore, stateFilter]
+    [deckId, offset, hasMore]
   );
 
   useEffect(() => {
@@ -710,8 +714,8 @@ const GRID = "60px 1fr 1.2fr 110px 90px 80px 80px 36px";
 function MobileCardRow({
   card,
   index,
-  onEdit: _onEdit,
-  onDelete: _onDelete,
+  onEdit,
+  onDelete,
 }: {
   card: CardWithStatus;
   index: number;
@@ -752,6 +756,23 @@ function MobileCardRow({
         <span className={`pill ${card.statusVariant === "default" ? "" : card.statusVariant}`}>
           {card.statusText}
         </span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex-shrink-0 flex items-start">
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="icon">
+              <Icon name="more" size={14} />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onSelect={onEdit}>Edit</DropdownMenuItem>
+            <DropdownMenuItem className="text-destructive" onSelect={onDelete}>
+              Delete
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </div>
   );
