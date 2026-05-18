@@ -1,26 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/glot/icon";
 import { cn } from "@/lib/utils";
-
-// Mock card data (preserved from prior implementation)
-const mockCard = {
-  id: 1,
-  front: "Ephemeral",
-  back: "Lasting for a very short time; transitory.\n\n'The ephemeral nature of cherry blossoms makes them even more precious.'",
-  deckName: "SAT Vocabulary",
-  cardNumber: 5,
-  totalCards: 23,
-};
+import { cardsApi, type Card } from "@/lib/api/cards";
+import { decksApi, type Deck } from "@/lib/api/decks";
+import { getSessionProgress } from "./session-progress";
 
 const ratingButtons = [
-  { label: "Again", shortcut: "1", description: "< 1min", tone: "bad" as const },
-  { label: "Hard", shortcut: "2", description: "6min", tone: "warn" as const },
-  { label: "Good", shortcut: "3", description: "10min", tone: "accent" as const },
-  { label: "Easy", shortcut: "4", description: "4d", tone: "info" as const },
+  { label: "Again", rating: 1, shortcut: "1", description: "Retry soon", tone: "bad" as const },
+  { label: "Hard", rating: 2, shortcut: "2", description: "Still hard", tone: "warn" as const },
+  { label: "Good", rating: 3, shortcut: "3", description: "Got it", tone: "accent" as const },
+  { label: "Easy", rating: 4, shortcut: "4", description: "Too easy", tone: "info" as const },
 ];
 
 const TONE_VARS: Record<string, { bg: string; fg: string; border: string }> = {
@@ -30,55 +23,134 @@ const TONE_VARS: Record<string, { bg: string; fg: string; border: string }> = {
   info: { bg: "var(--info)", fg: "#0a0a0b", border: "var(--info)" },
 };
 
-export default function SessionPage() {
-  // Preserved: search params for deck filtering (drives mock title for now)
-  useSearchParams();
+function parseDeckId(value: string | null): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
 
+function formatContent(value: string): string {
+  return value.trim() || "Untitled card";
+}
+
+export default function SessionPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const deckId = parseDeckId(searchParams.get("deck_id"));
+
+  const [cards, setCards] = useState<Card[]>([]);
+  const [decks, setDecks] = useState<Deck[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [reviewedCount, setReviewedCount] = useState(0);
+  const [startedAt, setStartedAt] = useState<number>(() => Date.now());
+  const isSubmittingRef = useRef(false);
 
-  const handleFlip = () => {
-    if (!isAnimating) {
-      setIsAnimating(true);
-      setIsFlipped((f) => !f);
-      setTimeout(() => setIsAnimating(false), 300);
-    }
-  };
+  const currentCard = cards[currentIndex];
+  const deckById = useMemo(() => new Map(decks.map((deck) => [deck.id, deck])), [decks]);
+  const currentDeck = currentCard?.deck_id ? deckById.get(currentCard.deck_id) : undefined;
+  const { cardNumber, totalCards, progressPercent, estimatedMinutes } = getSessionProgress({
+    sessionTotal,
+    reviewedCount,
+    hasCurrentCard: Boolean(currentCard),
+  });
 
-  const handleRate = (rating: string) => {
+  const loadSession = useCallback(async () => {
+    setLoading(true);
+    setError(null);
     setIsFlipped(false);
-    console.log("Rated:", rating);
-  };
+    setCurrentIndex(0);
+    setSessionTotal(0);
+    setReviewedCount(0);
+    setIsSubmitting(false);
+    isSubmittingRef.current = false;
 
-  // Keyboard shortcuts (skip when focus is in an input/textarea/select)
+    try {
+      const [dueCards, allDecks] = await Promise.all([
+        cardsApi.getDueCards({ deck_id: deckId, limit: 100 }),
+        decksApi.listDecks(),
+      ]);
+      setCards(dueCards);
+      setDecks(allDecks);
+      setSessionTotal(dueCards.length);
+      setStartedAt(Date.now());
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load review session");
+    } finally {
+      setLoading(false);
+    }
+  }, [deckId]);
+
+  useEffect(() => {
+    void loadSession();
+  }, [loadSession]);
+
+  const handleFlip = useCallback(() => {
+    if (!currentCard || isAnimating || isSubmitting) return;
+
+    setIsAnimating(true);
+    setIsFlipped((flipped) => !flipped);
+    window.setTimeout(() => setIsAnimating(false), 300);
+  }, [currentCard, isAnimating, isSubmitting]);
+
+  const handleRate = useCallback(
+    async (rating: 1 | 2 | 3 | 4) => {
+      if (!currentCard || isSubmittingRef.current) return;
+
+      isSubmittingRef.current = true;
+      setIsSubmitting(true);
+      setError(null);
+      try {
+        await cardsApi.reviewCard(currentCard.id, {
+          rating,
+          review_duration_ms: Date.now() - startedAt,
+        });
+
+        setCards((existingCards) => existingCards.filter((card) => card.id !== currentCard.id));
+        setCurrentIndex(0);
+        setReviewedCount((count) => Math.min(count + 1, sessionTotal));
+        setIsFlipped(false);
+        setStartedAt(Date.now());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Failed to submit review");
+      } finally {
+        isSubmittingRef.current = false;
+        setIsSubmitting(false);
+      }
+    },
+    [currentCard, sessionTotal, startedAt]
+  );
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement)?.tagName;
       if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+
       if (e.code === "Space") {
         e.preventDefault();
         handleFlip();
+        return;
       }
+
       if (isFlipped) {
-        const idx = ["1", "2", "3", "4"].indexOf(e.key);
-        if (idx >= 0) handleRate(ratingButtons[idx].label);
+        const button = ratingButtons.find((candidate) => candidate.shortcut === e.key);
+        if (button) void handleRate(button.rating as 1 | 2 | 3 | 4);
       }
     };
+
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isFlipped, isAnimating]);
+  }, [handleFlip, handleRate, isFlipped]);
 
-  const progressPercent = (mockCard.cardNumber / mockCard.totalCards) * 100;
-  const remaining = mockCard.totalCards - mockCard.cardNumber + 1;
-  const estimatedMinutes = Math.max(1, Math.round(remaining * 0.25));
+  const deckName = currentDeck?.name ?? (deckId ? "Selected deck" : "Mixed review");
 
   return (
-    <div
-      className="min-h-screen flex flex-col"
-      style={{ background: "var(--bg)" }}
-    >
-      {/* Sticky header */}
+    <div className="h-full min-h-0 -m-4 flex flex-col md:-m-6 lg:-m-8" style={{ background: "var(--bg)" }}>
       <header
         className="sticky top-0 z-30"
         style={{
@@ -89,50 +161,40 @@ export default function SessionPage() {
         }}
       >
         <div className="max-w-3xl mx-auto flex items-center justify-between gap-4 px-4 md:px-6 h-14">
-          <div className="flex items-center gap-2">
-            <Button variant="ghost" size="sm" className="gap-2" onClick={() => window.history.back()}>
-              <Icon name="close" size={14} />
-              <span className="hidden sm:inline">Exit</span>
-            </Button>
-          </div>
+          <Button variant="ghost" size="sm" className="gap-2" onClick={() => router.back()}>
+            <Icon name="close" size={14} />
+            <span className="hidden sm:inline">Exit</span>
+          </Button>
 
           <div className="flex items-center gap-4">
-            <div
-              className="mono"
-              style={{ fontSize: 12, color: "var(--muted)", letterSpacing: "0.04em" }}
-            >
-              <span style={{ color: "var(--fg)", fontWeight: 600 }}>
-                {String(mockCard.cardNumber).padStart(2, "0")}
-              </span>
+            <div className="mono" style={{ fontSize: 12, color: "var(--muted)", letterSpacing: "0.04em" }}>
+              <span style={{ color: "var(--fg)", fontWeight: 600 }}>{String(cardNumber).padStart(2, "0")}</span>
               <span style={{ color: "var(--line-2)", margin: "0 6px" }}>/</span>
-              <span>{String(mockCard.totalCards).padStart(2, "0")}</span>
+              <span>{String(totalCards).padStart(2, "0")}</span>
             </div>
-            <div
-              className="hidden sm:flex items-center gap-1.5"
-              style={{ fontSize: 11, color: "var(--muted)" }}
-            >
+            <div className="hidden sm:flex items-center gap-1.5" style={{ fontSize: 11, color: "var(--muted)" }}>
               <Icon name="clock" size={12} />
               <span className="mono">~{estimatedMinutes}m</span>
             </div>
           </div>
 
           <div className="flex gap-1">
-            <Button variant="ghost" size="icon" aria-label="Flag">
-              <Icon name="flag" size={15} />
+            <Button variant="ghost" size="icon" aria-label="Refresh session" onClick={loadSession} disabled={loading || isSubmitting}>
+              <Icon name="arrowU" size={15} />
             </Button>
-            <Button variant="ghost" size="icon" aria-label="Edit">
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Edit card"
+              disabled={!currentCard?.deck_id}
+              onClick={() => currentCard?.deck_id && router.push(`/decks/${currentCard.deck_id}`)}
+            >
               <Icon name="edit" size={15} />
             </Button>
           </div>
         </div>
 
-        {/* Progress bar */}
-        <div
-          style={{
-            height: 2,
-            background: "var(--surface-1)",
-          }}
-        >
+        <div style={{ height: 2, background: "var(--surface-1)" }}>
           <div
             style={{
               height: "100%",
@@ -145,211 +207,99 @@ export default function SessionPage() {
         </div>
       </header>
 
-      {/* Main */}
       <main className="flex-1 flex flex-col">
-        {/* Deck kicker */}
         <div className="max-w-3xl mx-auto w-full px-4 md:px-6 pt-8 md:pt-12 text-center">
-          <span
-            className="pill outline"
-            style={{ display: "inline-flex" }}
-          >
+          <span className="pill outline" style={{ display: "inline-flex" }}>
             <Icon name="layers" size={11} />
-            {mockCard.deckName}
+            {deckName}
           </span>
         </div>
 
-        {/* Flashcard */}
         <div className="flex-1 flex items-center justify-center px-4 md:px-6 py-10">
-          <div
-            className="perspective-1000 w-full max-w-2xl cursor-pointer"
-            onClick={handleFlip}
-            role="button"
-            aria-label="Flip card"
-          >
+          {loading ? (
+            <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
+              <p className="mono" style={{ color: "var(--muted)", letterSpacing: "0.12em" }}>LOADING SESSION</p>
+            </div>
+          ) : error ? (
+            <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
+              <p className="mono mb-4" style={{ color: "var(--bad)", letterSpacing: "0.12em" }}>SESSION ERROR</p>
+              <p className="serif mb-6" style={{ color: "var(--fg)", fontSize: 22 }}>{error}</p>
+              <Button onClick={loadSession}>Try again</Button>
+            </div>
+          ) : !currentCard ? (
+            <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
+              <p className="mono mb-4" style={{ color: "var(--accent)", letterSpacing: "0.12em" }}>ALL CAUGHT UP</p>
+              <h2 className="serif mb-3" style={{ color: "var(--fg)", fontSize: 36 }}>No cards due right now.</h2>
+              <p className="mb-6" style={{ color: "var(--muted)" }}>Add new cards or come back when more reviews are scheduled.</p>
+              <Button onClick={() => router.push("/decks")}>Back to decks</Button>
+            </div>
+          ) : (
             <div
-              className={cn(
-                "relative w-full preserve-3d transition-transform duration-300",
-                isFlipped && "rotate-y-180"
-              )}
-              style={{ minHeight: "clamp(260px, 40vh, 420px)" }}
+              className={cn("perspective-1000 w-full max-w-2xl", !isFlipped && "cursor-pointer")}
+              onClick={!isFlipped ? handleFlip : undefined}
+              role={!isFlipped ? "button" : undefined}
+              aria-label={!isFlipped ? "Flip card" : undefined}
             >
-              {/* Front */}
-              <div
-                className="absolute inset-0 backface-hidden glot-card flex flex-col items-center justify-center p-10 text-center"
-                style={{
-                  background: "var(--surface)",
-                  boxShadow: "0 30px 80px -40px rgba(0,0,0,0.4)",
-                }}
-              >
-                <div
-                  className="mono mb-6"
-                  style={{ fontSize: 11, color: "var(--muted-2)", letterSpacing: "0.16em" }}
-                >
-                  QUESTION
+              <div className={cn("relative w-full preserve-3d transition-transform duration-300", isFlipped && "rotate-y-180")} style={{ minHeight: "clamp(260px, 40vh, 420px)" }}>
+                <div className="absolute inset-0 backface-hidden glot-card flex flex-col items-center justify-center p-10 text-center" style={{ background: "var(--surface)", boxShadow: "0 30px 80px -40px rgba(0,0,0,0.4)" }}>
+                  <div className="mono mb-6" style={{ fontSize: 11, color: "var(--muted-2)", letterSpacing: "0.16em" }}>QUESTION</div>
+                  <h2 className="serif" style={{ fontSize: "clamp(36px, 6vw, 64px)", fontWeight: 500, lineHeight: 1.1, letterSpacing: "-0.03em", color: "var(--fg)" }}>
+                    {formatContent(currentCard.front_content)}
+                  </h2>
+                  <div className="mt-auto pt-8 mono flex items-center gap-2" style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.08em" }}>
+                    TAP OR PRESS <kbd>SPACE</kbd>
+                  </div>
                 </div>
-                <h2
-                  className="serif"
-                  style={{
-                    fontSize: "clamp(40px, 6vw, 64px)",
-                    fontWeight: 500,
-                    lineHeight: 1.1,
-                    letterSpacing: "-0.03em",
-                    color: "var(--fg)",
-                  }}
-                >
-                  {mockCard.front}
-                </h2>
-                <div
-                  className="mt-auto pt-8 mono flex items-center gap-2"
-                  style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.08em" }}
-                >
-                  TAP OR PRESS <kbd>SPACE</kbd>
-                </div>
-              </div>
 
-              {/* Back */}
-              <div
-                className="absolute inset-0 backface-hidden rotate-y-180 glot-card flex flex-col items-center justify-center p-10 text-center"
-                style={{
-                  background: "var(--surface)",
-                  borderColor: "color-mix(in oklab, var(--accent) 35%, var(--line))",
-                  boxShadow: "0 30px 80px -40px var(--accent-glow)",
-                }}
-              >
-                <div
-                  className="mono mb-4"
-                  style={{
-                    fontSize: 11,
-                    color: "var(--accent)",
-                    letterSpacing: "0.16em",
-                  }}
-                >
-                  ANSWER
+                <div className="absolute inset-0 backface-hidden rotate-y-180 glot-card flex flex-col items-center justify-center p-10 text-center" style={{ background: "var(--surface)", borderColor: "color-mix(in oklab, var(--accent) 35%, var(--line))", boxShadow: "0 30px 80px -40px var(--accent-glow)" }}>
+                  <div className="mono mb-4" style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.16em" }}>ANSWER</div>
+                  <h3 className="serif" style={{ fontSize: 28, fontWeight: 500, color: "var(--accent)", marginBottom: 16 }}>
+                    {formatContent(currentCard.front_content)}
+                  </h3>
+                  <p className="serif whitespace-pre-line max-w-xl" style={{ fontSize: 19, lineHeight: 1.5, color: "var(--fg)", fontWeight: 400 }}>
+                    {formatContent(currentCard.back_content)}
+                  </p>
                 </div>
-                <h3
-                  className="serif"
-                  style={{
-                    fontSize: 28,
-                    fontWeight: 500,
-                    color: "var(--accent)",
-                    marginBottom: 16,
-                  }}
-                >
-                  {mockCard.front}
-                </h3>
-                <p
-                  className="serif whitespace-pre-line max-w-xl"
-                  style={{
-                    fontSize: 19,
-                    lineHeight: 1.5,
-                    color: "var(--fg)",
-                    fontWeight: 400,
-                  }}
-                >
-                  {mockCard.back}
-                </p>
               </div>
             </div>
-          </div>
+          )}
         </div>
 
-        {/* Rating footer */}
-        <div
-          className="px-4 md:px-6 pb-8 pt-4"
-          style={{
-            borderTop: "1px solid var(--line)",
-            background: "var(--bg-1)",
-          }}
-        >
+        <div className="px-4 md:px-6 pb-8 pt-4" style={{ borderTop: "1px solid var(--line)", background: "var(--bg-1)", position: "relative", zIndex: 10 }}>
           <div className="max-w-2xl mx-auto">
-            {isFlipped ? (
+            {currentCard && isFlipped ? (
               <>
-                <div
-                  className="mono text-center mb-3"
-                  style={{
-                    fontSize: 10,
-                    color: "var(--muted-2)",
-                    letterSpacing: "0.16em",
-                  }}
-                >
-                  RATE YOUR RECALL
-                </div>
+                <div className="mono text-center mb-3" style={{ fontSize: 10, color: "var(--muted-2)", letterSpacing: "0.16em" }}>RATE YOUR RECALL</div>
                 <div className="grid grid-cols-4 gap-2">
                   {ratingButtons.map((btn) => {
                     const tone = TONE_VARS[btn.tone];
                     return (
                       <button
                         key={btn.label}
-                        onClick={() => handleRate(btn.label)}
-                        className="focus-glow"
-                        style={{
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          gap: 2,
-                          padding: "14px 8px",
-                          borderRadius: "var(--radius)",
-                          background: tone.bg,
-                          color: tone.fg,
-                          border: `1px solid ${tone.border}`,
-                          cursor: "pointer",
-                          fontWeight: 600,
-                          transition: "transform .12s ease, filter .15s ease",
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          void handleRate(btn.rating as 1 | 2 | 3 | 4);
                         }}
-                        onMouseEnter={(e) =>
-                          (e.currentTarget.style.filter = "brightness(1.05)")
-                        }
-                        onMouseLeave={(e) =>
-                          (e.currentTarget.style.filter = "brightness(1)")
-                        }
+                        disabled={isSubmitting}
+                        className="focus-glow"
+                        style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: "14px 8px", borderRadius: "var(--radius)", background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`, cursor: isSubmitting ? "wait" : "pointer", fontWeight: 600, opacity: isSubmitting ? 0.7 : 1 }}
                       >
                         <span style={{ fontSize: 14 }}>{btn.label}</span>
-                        <span
-                          className="mono"
-                          style={{
-                            fontSize: 10,
-                            opacity: 0.75,
-                            letterSpacing: "0.04em",
-                          }}
-                        >
-                          {btn.description}
-                        </span>
-                        <kbd
-                          style={{
-                            marginTop: 4,
-                            background: "rgba(0,0,0,0.15)",
-                            color: "inherit",
-                            border: "1px solid rgba(0,0,0,0.15)",
-                          }}
-                        >
-                          {btn.shortcut}
-                        </kbd>
+                        <span className="mono" style={{ fontSize: 10, opacity: 0.75, letterSpacing: "0.04em" }}>{btn.description}</span>
+                        <kbd style={{ marginTop: 4, background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.15)" }}>{btn.shortcut}</kbd>
                       </button>
                     );
                   })}
                 </div>
               </>
-            ) : (
+            ) : currentCard ? (
               <div className="flex justify-center">
-                <Button
-                  size="lg"
-                  className="px-12 gap-2"
-                  onClick={handleFlip}
-                >
+                <Button size="lg" className="px-12 gap-2" onClick={handleFlip} disabled={isSubmitting}>
                   Show answer
-                  <kbd
-                    style={{
-                      background: "rgba(0,0,0,0.15)",
-                      color: "inherit",
-                      border: "1px solid rgba(0,0,0,0.2)",
-                    }}
-                  >
-                    SPACE
-                  </kbd>
+                  <kbd style={{ background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.2)" }}>SPACE</kbd>
                 </Button>
               </div>
-            )}
+            ) : null}
           </div>
         </div>
       </main>
