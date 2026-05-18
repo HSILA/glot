@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/glot/icon";
@@ -49,6 +49,7 @@ export default function SessionPage() {
   const [sessionTotal, setSessionTotal] = useState(0);
   const [reviewedCount, setReviewedCount] = useState(0);
   const [startedAt, setStartedAt] = useState<number>(() => Date.now());
+  const isSubmittingRef = useRef(false);
 
   const currentCard = cards[currentIndex];
   const deckById = useMemo(() => new Map(decks.map((deck) => [deck.id, deck])), [decks]);
@@ -66,6 +67,8 @@ export default function SessionPage() {
     setCurrentIndex(0);
     setSessionTotal(0);
     setReviewedCount(0);
+    setIsSubmitting(false);
+    isSubmittingRef.current = false;
 
     try {
       const [dueCards, allDecks] = await Promise.all([
@@ -97,8 +100,9 @@ export default function SessionPage() {
 
   const handleRate = useCallback(
     async (rating: 1 | 2 | 3 | 4) => {
-      if (!currentCard || isSubmitting) return;
+      if (!currentCard || isSubmittingRef.current) return;
 
+      isSubmittingRef.current = true;
       setIsSubmitting(true);
       setError(null);
       try {
@@ -108,17 +112,18 @@ export default function SessionPage() {
         });
 
         setCards((existingCards) => existingCards.filter((card) => card.id !== currentCard.id));
-        setCurrentIndex((index) => Math.min(index, Math.max(0, cards.length - 2)));
+        setCurrentIndex(0);
         setReviewedCount((count) => Math.min(count + 1, sessionTotal));
         setIsFlipped(false);
         setStartedAt(Date.now());
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to submit review");
       } finally {
+        isSubmittingRef.current = false;
         setIsSubmitting(false);
       }
     },
-    [cards.length, currentCard, isSubmitting, sessionTotal, startedAt]
+    [currentCard, sessionTotal, startedAt]
   );
 
   useEffect(() => {
