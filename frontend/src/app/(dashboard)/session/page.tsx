@@ -7,6 +7,7 @@ import { Icon } from "@/components/glot/icon";
 import { cn } from "@/lib/utils";
 import { cardsApi, type Card } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
+import { getSessionProgress } from "./session-progress";
 
 const ratingButtons = [
   { label: "Again", rating: 1, shortcut: "1", description: "Retry soon", tone: "bad" as const },
@@ -45,23 +46,26 @@ export default function SessionPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [sessionTotal, setSessionTotal] = useState(0);
+  const [reviewedCount, setReviewedCount] = useState(0);
   const [startedAt, setStartedAt] = useState<number>(() => Date.now());
 
   const currentCard = cards[currentIndex];
   const deckById = useMemo(() => new Map(decks.map((deck) => [deck.id, deck])), [decks]);
   const currentDeck = currentCard?.deck_id ? deckById.get(currentCard.deck_id) : undefined;
-  const totalCards = cards.length;
-  const cardNumber = totalCards === 0 ? 0 : currentIndex + 1;
-  const progressPercent = totalCards === 0 ? 0 : (cardNumber / totalCards) * 100;
-  const remaining = Math.max(0, totalCards - currentIndex);
-  const estimatedMinutes = Math.max(1, Math.round(remaining * 0.25));
+  const { cardNumber, totalCards, progressPercent, estimatedMinutes } = getSessionProgress({
+    sessionTotal,
+    reviewedCount,
+    hasCurrentCard: Boolean(currentCard),
+  });
 
   const loadSession = useCallback(async () => {
     setLoading(true);
     setError(null);
     setIsFlipped(false);
     setCurrentIndex(0);
-    setStartedAt(Date.now());
+    setSessionTotal(0);
+    setReviewedCount(0);
 
     try {
       const [dueCards, allDecks] = await Promise.all([
@@ -70,6 +74,8 @@ export default function SessionPage() {
       ]);
       setCards(dueCards);
       setDecks(allDecks);
+      setSessionTotal(dueCards.length);
+      setStartedAt(Date.now());
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load review session");
     } finally {
@@ -103,6 +109,7 @@ export default function SessionPage() {
 
         setCards((existingCards) => existingCards.filter((card) => card.id !== currentCard.id));
         setCurrentIndex((index) => Math.min(index, Math.max(0, cards.length - 2)));
+        setReviewedCount((count) => Math.min(count + 1, sessionTotal));
         setIsFlipped(false);
         setStartedAt(Date.now());
       } catch (err) {
@@ -111,7 +118,7 @@ export default function SessionPage() {
         setIsSubmitting(false);
       }
     },
-    [cards.length, currentCard, isSubmitting, startedAt]
+    [cards.length, currentCard, isSubmitting, sessionTotal, startedAt]
   );
 
   useEffect(() => {

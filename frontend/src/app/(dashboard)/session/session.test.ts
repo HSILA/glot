@@ -27,6 +27,7 @@ import {
   type Card,
   type NextStatesResponse,
 } from "@/lib/api/cards";
+import { getSessionProgress } from "./session-progress";
 import {
   installFetchMock,
   installWindowMock,
@@ -74,6 +75,42 @@ beforeEach(() => {
 afterEach(() => {
   restoreFetch();
   restoreWindow();
+});
+
+describe("session — progress display", () => {
+  test("keeps the original session total while advancing through reviewed cards", () => {
+    const firstCard = getSessionProgress({ sessionTotal: 3, reviewedCount: 0, hasCurrentCard: true });
+    expect(firstCard).toMatchObject({
+      cardNumber: 1,
+      totalCards: 3,
+      remaining: 3,
+    });
+    expect(firstCard.progressPercent).toBeCloseTo(100 / 3);
+
+    const secondCard = getSessionProgress({ sessionTotal: 3, reviewedCount: 1, hasCurrentCard: true });
+    expect(secondCard).toMatchObject({
+      cardNumber: 2,
+      totalCards: 3,
+      remaining: 2,
+    });
+    expect(secondCard.progressPercent).toBeCloseTo(200 / 3);
+
+    expect(getSessionProgress({ sessionTotal: 3, reviewedCount: 3, hasCurrentCard: false })).toMatchObject({
+      cardNumber: 3,
+      totalCards: 3,
+      progressPercent: 100,
+      remaining: 0,
+    });
+  });
+
+  test("shows zero progress for an empty session", () => {
+    expect(getSessionProgress({ sessionTotal: 0, reviewedCount: 0, hasCurrentCard: false })).toMatchObject({
+      cardNumber: 0,
+      totalCards: 0,
+      progressPercent: 0,
+      remaining: 0,
+    });
+  });
 });
 
 describe("session — due-card loading", () => {
