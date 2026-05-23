@@ -2,14 +2,15 @@
 set -euo pipefail
 
 # Validate commit messages follow:
-#   <type>: <title>
+#   <type>[(scope)][!]: <title>
 #   <empty line>
 #   - bullet
 #   - bullet
 #
-# Allowed types: fix|feature|chore|style|refactor|docs|test|perf|build|ci|revert
+# Allowed types: feat|fix|chore|style|refactor|docs|test|perf|build|ci|revert
+# Legacy "feature" is still accepted but new commits should use canonical "feat".
 
-allowed_types_regex='^(fix|feature|chore|style|refactor|docs|test|perf|build|ci|revert): .+'
+allowed_types_regex='^(feat|feature|fix|chore|style|refactor|docs|test|perf|build|ci|revert)(\([a-zA-Z0-9_./-]+\))?!?: .+'
 
 validate_message_text() {
   local text="$1"
@@ -23,8 +24,9 @@ validate_message_text() {
   rest="$(printf '%s' "$text" | sed -n '3,$p')"
 
   if ! printf '%s' "$first" | grep -Eq "$allowed_types_regex"; then
-    echo "ERROR: First line must match '<type>: <title>' with allowed types." >&2
-    echo "  Allowed types: fix, feature, chore, style, refactor, docs, test, perf, build, ci, revert" >&2
+    echo "ERROR: First line must match '<type>[(scope)][!]: <title>' with allowed types." >&2
+    echo "  Allowed types: feat, fix, chore, style, refactor, docs, test, perf, build, ci, revert" >&2
+    echo "  Legacy 'feature' is still accepted; prefer 'feat' for new commits." >&2
     echo "  Got: $first" >&2
     return 1
   fi
