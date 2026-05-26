@@ -166,12 +166,36 @@ Or use `just db-shell` for PostgreSQL CLI.
 
 This repo enforces a commit message format:
 
-- First line: `<type>: <title>` where type is one of `fix|feature|chore|style|refactor|docs|test|perf|build|ci|revert`
+- First line: `<type>[(scope)][!]: <title>` where type is one of `feat|fix|chore|style|refactor|docs|test|perf|build|ci|revert`
 - Second line: empty
 - Then one bullet per change, each starting with `- `
+
+Use `feat` for new functionality (canonical Conventional Commits). The legacy
+`feature` type is still accepted by the hook so older branches keep working,
+but prefer `feat` for new commits — release-please treats both as features.
 
 To enable local enforcement, run:
 
 ```bash
 ./scripts/setup-githooks.sh
 ```
+
+## Releases
+
+Versioning and changelog generation are automated by
+[release-please](https://github.com/googleapis/release-please). Glot uses a
+single unified version across the backend and frontend.
+
+How it works:
+
+- Write PR titles and squash-merge commit subjects as Conventional Commits
+  (e.g. `feat: ...`, `fix: ...`, `feat!: ...` for breaking changes).
+- Each merge to `main` updates a long-running **release-please Release PR**
+  that accumulates pending changes and proposes the next version + changelog.
+- Merging that Release PR is what cuts a release: release-please writes the
+  new version into `frontend/package.json`, `backend/pyproject.toml`, and
+  `backend/app/core/__init__.py` (via a `# x-release-please-version` marker),
+  updates `CHANGELOG.md`, creates a Git tag, and publishes a GitHub Release.
+
+While the project is pre-1.0 (`0.x.y`), `feat:` and breaking changes bump the
+minor version and `fix:` bumps the patch version.
