@@ -4,6 +4,7 @@
   "include-component-in-tag": false,
   "bump-minor-pre-major": true,
   "bump-patch-for-minor-pre-major": false,
+  "bootstrap-sha": "1569f1ee016a316e4bad51fa1b90e90a86bc35ee",
   "packages": {
     ".": {
       "package-name": "glot",
