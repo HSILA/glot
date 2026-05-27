@@ -7,7 +7,7 @@ networks:
 
 services:
   backend:
-    image: ghcr.io/hisila/glot-backend:${GLOT_VERSION:-latest}
+    image: ghcr.io/hsila/glot-backend:${GLOT_VERSION:-latest}
     container_name: glot-backend
     restart: unless-stopped
     env_file:
@@ -22,7 +22,7 @@ services:
           memory: 400M
 
   worker:
-    image: ghcr.io/hisila/glot-backend:${GLOT_VERSION:-latest}
+    image: ghcr.io/hsila/glot-backend:${GLOT_VERSION:-latest}
     container_name: glot-worker
     restart: unless-stopped
     env_file:
@@ -36,7 +36,7 @@ services:
           memory: 300M
 
   frontend:
-    image: ghcr.io/hisila/glot-frontend:${GLOT_VERSION:-latest}
+    image: ghcr.io/hsila/glot-frontend:${GLOT_VERSION:-latest}
     container_name: glot-frontend
     restart: unless-stopped
     env_file:

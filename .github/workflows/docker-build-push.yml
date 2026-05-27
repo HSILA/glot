@@ -1,9 +1,13 @@
 name: Build and Push Docker Images
 
 on:
-  push:
-    branches: [main]
+  release:
+    types: [published]
   workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
 
 env:
   REGISTRY: ghcr.io
@@ -35,8 +39,10 @@ jobs:
         with:
           images: ${{ env.BACKEND_IMAGE }}
           tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 
       - name: Build and push backend
         uses: docker/build-push-action@v5
@@ -72,8 +78,10 @@ jobs:
         with:
           images: ${{ env.FRONTEND_IMAGE }}
           tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.event_name == 'release' }}
 
       - name: Build and push frontend
         uses: docker/build-push-action@v5
@@ -88,12 +96,26 @@ jobs:
   deploy:
     needs: [build-backend, build-frontend]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main'
+    permissions: {}
     steps:
-      - name: Deploy to VPS
+      - uses: actions/checkout@v4
+
+      - name: Deploy
+        env:
+          GLOT_VERSION: ${{ github.event.release.tag_name || github.sha }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
         run: |
+          # Strip 'v' prefix from release tag (v0.2.0 → 0.2.0)
+          GLOT_VERSION="${GLOT_VERSION#v}"
+          # On non-release triggers, use short SHA
+          if [ "${{ github.event_name }}" != "release" ]; then
+            GLOT_VERSION="${GLOT_VERSION:0:7}"
+          fi
+
+          trap 'rm -f ~/.ssh/deploy_key' EXIT
           mkdir -p ~/.ssh
-          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          printf '%s\n' "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          echo "${{ secrets.VPS_SSH_HOSTKEY }}" >> ~/.ssh/known_hosts
-          ssh -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '~/deploy.sh'
+          printf '%s\n' "${{ secrets.DEPLOY_HOSTKEY }}" >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" scripts/deploy.sh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/deploy.sh
+          ssh -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "GLOT_VERSION=$GLOT_VERSION REGISTRY_TOKEN='$REGISTRY_TOKEN' ~/deploy.sh"
