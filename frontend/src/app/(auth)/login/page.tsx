@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Mail, Lock, ArrowRight, Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,11 +12,24 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [verifiedPending, setVerifiedPending] = useState(false);
+
+  // Surface the post-registration notice. The register page redirects here
+  // with `?verified=pending`; reading from window.location (rather than
+  // useSearchParams) keeps this page out of a Suspense boundary at build time.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("verified") === "pending") {
+      setVerifiedPending(true);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setIsLoading(true);
     setError(null);
+    setVerifiedPending(false);
 
     const formData = new FormData(e.currentTarget);
     const email = formData.get("email") as string;
@@ -216,6 +229,19 @@ export default function LoginPage() {
           </p>
 
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
+            {verifiedPending && (
+              <div
+                className="px-4 py-3 rounded-lg text-sm font-medium"
+                style={{
+                  background: "color-mix(in oklab, var(--good) 12%, transparent)",
+                  border: "1px solid color-mix(in oklab, var(--good) 30%, transparent)",
+                  color: "var(--good)",
+                }}
+              >
+                Account created successfully. Your account is awaiting admin approval.
+              </div>
+            )}
+
             {error && (
               <div
                 className="px-4 py-3 rounded-lg text-sm font-medium"

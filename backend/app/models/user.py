@@ -7,7 +7,7 @@ Passwords are stored as hashes (never plain text).
 
 from datetime import datetime
 
-from sqlalchemy import Column, Index, text
+from sqlalchemy import Boolean, Column, Index, text
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
@@ -52,9 +52,17 @@ class User(SQLModel, table=True):
 
     # Account status
     is_active: bool = Field(
-        default=True,
-        index=True,
-        description="False = account suspended or soft-deleted",
+        default=False,
+        sa_column=Column(
+            Boolean,
+            index=True,
+            nullable=False,
+            server_default=text("false"),
+        ),
+        description=(
+            "False = awaiting admin approval, suspended, or soft-deleted. "
+            "New sign-ups start inactive and require manual approval."
+        ),
     )
 
     # Timestamps
