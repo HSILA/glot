@@ -1,0 +1,51 @@
+# Production Compose — GHCR images, no local builds
+# Images are built by GitHub Actions and pushed to ghcr.io/HSILA/glot
+# VPS pulls them on release
+
+networks:
+  glot:
+
+services:
+  backend:
+    image: ghcr.io/hisila/glot-backend:${GLOT_VERSION:-latest}
+    container_name: glot-backend
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - glot
+    ports:
+      - "127.0.0.1:8000:8000"
+    deploy:
+      resources:
+        limits:
+          memory: 400M
+
+  worker:
+    image: ghcr.io/hisila/glot-backend:${GLOT_VERSION:-latest}
+    container_name: glot-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - glot
+    command: ["uv", "run", "arq", "app.workers.extraction_worker.WorkerSettings"]
+    deploy:
+      resources:
+        limits:
+          memory: 300M
+
+  frontend:
+    image: ghcr.io/hisila/glot-frontend:${GLOT_VERSION:-latest}
+    container_name: glot-frontend
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - glot
+    ports:
+      - "127.0.0.1:3000:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 200M
