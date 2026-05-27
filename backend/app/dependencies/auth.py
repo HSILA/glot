@@ -22,7 +22,10 @@ async def get_current_user(
     Raises HTTPException 401 if:
     - No access token cookie
     - Token is invalid or expired
-    - User not found or inactive
+    - User not found
+
+    Raises HTTPException 403 if:
+    - User is inactive (awaiting admin approval or suspended)
 
     Usage:
         @router.get("/protected")
@@ -54,9 +57,8 @@ async def get_current_user(
 
     if not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User account is disabled",
-            headers={"WWW-Authenticate": "Bearer"},
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account inactive. Contact admin.",
         )
 
     return user

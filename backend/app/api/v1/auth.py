@@ -172,8 +172,8 @@ async def login(
 
     if not user.is_active:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Account is disabled",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Your account is awaiting admin approval.",
         )
 
     # Update last login

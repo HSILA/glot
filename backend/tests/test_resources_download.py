@@ -31,6 +31,7 @@ async def test_get_download_url_returns_hash_filename_and_hash_based_url() -> No
         id=1,
         email="user@example.com",
         password_hash="hashed",
+        is_active=True,
     )
     user_resource = UserResource(
         user_id=1,
@@ -81,6 +82,7 @@ async def test_get_thumbnail_url_uses_async_existence_check() -> None:
         id=1,
         email="user@example.com",
         password_hash="hashed",
+        is_active=True,
     )
     user_resource = UserResource(
         user_id=1,

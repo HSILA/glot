@@ -55,9 +55,10 @@ export default function RegisterPage() {
       }
 
       setSuccess(true);
-      // Redirect to login after 2 seconds
+      // Redirect to login after 2 seconds. The `verified=pending` flag tells
+      // the login page to show the "awaiting admin approval" banner.
       setTimeout(() => {
-        router.push("/login");
+        router.push("/login?verified=pending");
       }, 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -120,7 +121,7 @@ export default function RegisterPage() {
 
               {success && (
                 <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/20 text-green-600 dark:text-green-400 text-sm">
-                  Account created successfully! Redirecting to login...
+                  Account created! Please wait for admin approval before logging in. Redirecting...
                 </div>
               )}
 
