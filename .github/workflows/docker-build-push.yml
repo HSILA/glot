@@ -84,3 +84,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy:
+    needs: [build-backend, build-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - name: Deploy to VPS
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "${{ secrets.VPS_SSH_HOSTKEY }}" >> ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" ${{ secrets.VPS_USER }}@${{ secrets.VPS_HOST }} '~/deploy.sh'
