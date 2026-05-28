@@ -24,13 +24,14 @@ from app.core import get_settings
 ph = PasswordHasher()
 
 # Legacy bcrypt support — existing users may still have bcrypt hashes.
-# Detected by the "$2b$" prefix.  On successful bcrypt login the caller
-# should rehash with Argon2 so the migration is gradual and transparent.
-BCRYPT_PREFIX = "$2b$"
+# Detected by the "$2b$" prefix (also matches $2a$/$2x$/$2y$ variants).
+# On successful bcrypt login the caller should rehash with Argon2 so the
+# migration is gradual and transparent.
+BCRYPT_PREFIXES = ("$2a$", "$2b$", "$2x$", "$2y$")
 
 
 def _is_bcrypt_hash(hashed: str) -> bool:
-    return hashed.startswith(BCRYPT_PREFIX)
+    return hashed.startswith(BCRYPT_PREFIXES)
 
 
 def _verify_bcrypt(plain_password: str, hashed_password: str) -> bool:
@@ -59,13 +60,15 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     a successful verification — if True, the stored hash should be replaced
     with a fresh Argon2 hash (transparent migration from bcrypt → Argon2).
     """
+    # Short-circuit: if the hash looks like bcrypt, go straight to bcrypt
+    # verification.  Passing a bcrypt hash to ph.verify() raises
+    # InvalidHashError (not VerifyMismatchError), which would escape uncaught.
+    if _is_bcrypt_hash(hashed_password):
+        return _verify_bcrypt(plain_password, hashed_password)
     try:
         ph.verify(hashed_password, plain_password)
         return True
     except VerifyMismatchError:
-        # Not a matching Argon2 hash — try bcrypt fallback
-        if _is_bcrypt_hash(hashed_password):
-            return _verify_bcrypt(plain_password, hashed_password)
         return False
 
 

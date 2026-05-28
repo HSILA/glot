@@ -171,17 +171,19 @@ async def login(
             detail="Invalid email or password",
         )
 
-    # Transparent migration: if the stored hash is bcrypt or weak Argon2,
-    # rehash with current Argon2 defaults on successful login.
-    if needs_rehash(user.password_hash):
-        user.password_hash = hash_password(login_data.password)
-        logger.info(f"Password hash upgraded to Argon2 for user: {user.email}")
-
     if not user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is awaiting admin approval.",
         )
+
+    # Transparent migration: if the stored hash is bcrypt or weak Argon2,
+    # rehash with current Argon2 defaults on successful login.
+    # Must run after is_active check so inactive users don't trigger a
+    # false "upgraded" log (their session gets rolled back anyway).
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(login_data.password)
+        logger.info(f"Password hash upgraded to Argon2 for user: {user.email}")
 
     # Update last login
     user.last_login_at = datetime.now(UTC)
