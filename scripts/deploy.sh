@@ -12,25 +12,28 @@ export GLOT_VERSION="${GLOT_VERSION:-latest}"
 
 echo "=== Glot Deploy (version: $GLOT_VERSION) ==="
 
-echo "[1/7] Logging in to GHCR..."
+echo "[1/8] Logging in to GHCR..."
 echo "$REGISTRY_TOKEN" | docker login ghcr.io -u hsilabot --password-stdin
 
-echo "[2/7] Capturing current image tags for rollback..."
+echo "[2/8] Capturing current image tags for rollback..."
 OLD_BACKEND_TAG=$(docker inspect --format='{{.Config.Image}}' glot-backend 2>/dev/null || echo "none")
 OLD_FRONTEND_TAG=$(docker inspect --format='{{.Config.Image}}' glot-frontend 2>/dev/null || echo "none")
 echo "  Previous backend: $OLD_BACKEND_TAG"
 echo "  Previous frontend: $OLD_FRONTEND_TAG"
 
-echo "[3/7] Pulling images (tag: $GLOT_VERSION)..."
+echo "[3/8] Stopping and removing old containers..."
+docker compose -f "$COMPOSE_FILE" down --remove-orphans || true
+
+echo "[4/8] Pulling images (tag: $GLOT_VERSION)..."
 docker compose -f "$COMPOSE_FILE" pull
 
-echo "[4/7] Running database migrations..."
+echo "[5/8] Running database migrations..."
 docker compose -f "$COMPOSE_FILE" run --rm backend uv run alembic upgrade head
 
-echo "[5/7] Restarting services..."
+echo "[6/8] Starting services..."
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 
-echo "[6/7] Health check..."
+echo "[7/8] Health check..."
 HEALTH_OK=false
 for i in $(seq 1 30); do
   if curl -sf http://127.0.0.1:8000/docs > /dev/null 2>&1; then
@@ -54,7 +57,7 @@ if [ "$HEALTH_OK" = "false" ]; then
   exit 1
 fi
 
-echo "[7/7] Cleaning old images..."
+echo "[8/8] Cleaning old images..."
 docker image prune -a -f
 
 echo "=== Deploy complete ==="
