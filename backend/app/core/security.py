@@ -23,6 +23,24 @@ from app.core import get_settings
 # Password hashing with Argon2 (no length limits, modern algorithm)
 ph = PasswordHasher()
 
+# Legacy bcrypt support — existing users may still have bcrypt hashes.
+# Detected by the "$2b$" prefix.  On successful bcrypt login the caller
+# should rehash with Argon2 so the migration is gradual and transparent.
+BCRYPT_PREFIX = "$2b$"
+
+
+def _is_bcrypt_hash(hashed: str) -> bool:
+    return hashed.startswith(BCRYPT_PREFIX)
+
+
+def _verify_bcrypt(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against a bcrypt hash (legacy migration path)."""
+    import bcrypt  # lazy — only imported when needed
+
+    return bcrypt.checkpw(
+        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+    )
+
 # Password validation constants
 PASSWORD_MIN_LENGTH = 8
 PASSWORD_MAX_LENGTH = 128  # Argon2 has no practical limit
@@ -35,12 +53,31 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its Argon2 hash."""
+    """Verify a password against its hash (Argon2 or legacy bcrypt).
+
+    Returns True on success.  Callers should check `needs_rehash()` after
+    a successful verification — if True, the stored hash should be replaced
+    with a fresh Argon2 hash (transparent migration from bcrypt → Argon2).
+    """
     try:
         ph.verify(hashed_password, plain_password)
         return True
     except VerifyMismatchError:
+        # Not a matching Argon2 hash — try bcrypt fallback
+        if _is_bcrypt_hash(hashed_password):
+            return _verify_bcrypt(plain_password, hashed_password)
         return False
+
+
+def needs_rehash(hashed_password: str) -> bool:
+    """Return True if the stored hash should be upgraded to Argon2.
+
+    True for bcrypt hashes and for Argon2 hashes whose parameters are
+    weaker than the current PasswordHasher defaults.
+    """
+    if _is_bcrypt_hash(hashed_password):
+        return True
+    return ph.check_needs_rehash(hashed_password)
 
 
 def validate_password_strength(password: str) -> str:

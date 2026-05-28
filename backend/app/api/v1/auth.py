@@ -34,6 +34,7 @@ from app.core.security import (
     generate_refresh_token,
     hash_password,
     hash_refresh_token,
+    needs_rehash,
     parse_device_name,
     verify_password,
 )
@@ -169,6 +170,12 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
+    # Transparent migration: if the stored hash is bcrypt or weak Argon2,
+    # rehash with current Argon2 defaults on successful login.
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(login_data.password)
+        logger.info(f"Password hash upgraded to Argon2 for user: {user.email}")
 
     if not user.is_active:
         raise HTTPException(
@@ -377,7 +384,7 @@ async def change_password(
             detail="Current password is incorrect",
         )
 
-    # Update password
+    # Update password (always uses Argon2)
     current_user.password_hash = hash_password(password_data.new_password)
 
     logger.info(f"Password changed for user: {current_user.email}")

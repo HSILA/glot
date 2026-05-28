@@ -2,6 +2,7 @@
 Core configuration and settings for the Glot backend.
 """
 
+import json
 from functools import lru_cache
 
 from pydantic import field_validator
@@ -72,6 +73,19 @@ class Settings(BaseSettings):
         """Require a non-empty JWT secret."""
         if not value.strip():
             raise ValueError("JWT_SECRET must not be blank")
+        return value
+
+    @field_validator("cors_origins", "resource_allowed_types", mode="before")
+    @classmethod
+    def parse_json_list(cls, value):
+        if isinstance(value, str):
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return parsed
+            except json.JSONDecodeError:
+                # Fallback: treat comma-separated string as list
+                return [item.strip() for item in value.split(",") if item.strip()]
         return value
 
 

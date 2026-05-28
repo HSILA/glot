@@ -4,6 +4,8 @@ set -euo pipefail
 DEPLOY_DIR="$HOME/glot"
 COMPOSE_FILE="$DEPLOY_DIR/docker-compose.prod.yml"
 
+cd "$DEPLOY_DIR"
+
 # Accept optional GLOT_VERSION env var (semver from CI, e.g. 0.2.0)
 # Falls back to :latest if not set
 export GLOT_VERSION="${GLOT_VERSION:-latest}"
