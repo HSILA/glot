@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from user_agents import parse as parse_user_agent
 
 from app.core import get_settings
@@ -38,9 +38,13 @@ def _verify_bcrypt(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against a bcrypt hash (legacy migration path)."""
     import bcrypt  # lazy — only imported when needed
 
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"), hashed_password.encode("utf-8")
-    )
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+        )
+    except (ValueError, TypeError):
+        # Malformed hash (e.g. truncated, bad salt) — treat as verification failure
+        return False
 
 # Password validation constants
 PASSWORD_MIN_LENGTH = 8
@@ -70,17 +74,24 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
         return True
     except VerifyMismatchError:
         return False
+    except InvalidHashError:
+        # Corrupted or unrecognized hash — treat as verification failure
+        return False
 
 
 def needs_rehash(hashed_password: str) -> bool:
     """Return True if the stored hash should be upgraded to Argon2.
 
     True for bcrypt hashes and for Argon2 hashes whose parameters are
-    weaker than the current PasswordHasher defaults.
+    weaker than the current PasswordHasher defaults.  Returns False for
+    corrupted/unrecognized hashes (no point rehashing garbage).
     """
     if _is_bcrypt_hash(hashed_password):
         return True
-    return ph.check_needs_rehash(hashed_password)
+    try:
+        return ph.check_needs_rehash(hashed_password)
+    except InvalidHashError:
+        return False
 
 
 def validate_password_strength(password: str) -> str:
