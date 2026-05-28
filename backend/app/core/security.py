@@ -15,13 +15,36 @@ from datetime import UTC, datetime, timedelta
 
 import jwt
 from argon2 import PasswordHasher
-from argon2.exceptions import VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from user_agents import parse as parse_user_agent
 
 from app.core import get_settings
 
 # Password hashing with Argon2 (no length limits, modern algorithm)
 ph = PasswordHasher()
+
+# Legacy bcrypt support — existing users may still have bcrypt hashes.
+# Detected by the "$2b$" prefix (also matches $2a$/$2x$/$2y$ variants).
+# On successful bcrypt login the caller should rehash with Argon2 so the
+# migration is gradual and transparent.
+BCRYPT_PREFIXES = ("$2a$", "$2b$", "$2x$", "$2y$")
+
+
+def _is_bcrypt_hash(hashed: str) -> bool:
+    return hashed.startswith(BCRYPT_PREFIXES)
+
+
+def _verify_bcrypt(plain_password: str, hashed_password: str) -> bool:
+    """Verify a password against a bcrypt hash (legacy migration path)."""
+    import bcrypt  # lazy — only imported when needed
+
+    try:
+        return bcrypt.checkpw(
+            plain_password.encode("utf-8"), hashed_password.encode("utf-8")
+        )
+    except (ValueError, TypeError):
+        # Malformed hash (e.g. truncated, bad salt) — treat as verification failure
+        return False
 
 # Password validation constants
 PASSWORD_MIN_LENGTH = 8
@@ -35,11 +58,39 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its Argon2 hash."""
+    """Verify a password against its hash (Argon2 or legacy bcrypt).
+
+    Returns True on success.  Callers should check `needs_rehash()` after
+    a successful verification — if True, the stored hash should be replaced
+    with a fresh Argon2 hash (transparent migration from bcrypt → Argon2).
+    """
+    # Short-circuit: if the hash looks like bcrypt, go straight to bcrypt
+    # verification.  Passing a bcrypt hash to ph.verify() raises
+    # InvalidHashError (not VerifyMismatchError), which would escape uncaught.
+    if _is_bcrypt_hash(hashed_password):
+        return _verify_bcrypt(plain_password, hashed_password)
     try:
         ph.verify(hashed_password, plain_password)
         return True
     except VerifyMismatchError:
+        return False
+    except InvalidHashError:
+        # Corrupted or unrecognized hash — treat as verification failure
+        return False
+
+
+def needs_rehash(hashed_password: str) -> bool:
+    """Return True if the stored hash should be upgraded to Argon2.
+
+    True for bcrypt hashes and for Argon2 hashes whose parameters are
+    weaker than the current PasswordHasher defaults.  Returns False for
+    corrupted/unrecognized hashes (no point rehashing garbage).
+    """
+    if _is_bcrypt_hash(hashed_password):
+        return True
+    try:
+        return ph.check_needs_rehash(hashed_password)
+    except InvalidHashError:
         return False
 
 

@@ -34,6 +34,7 @@ from app.core.security import (
     generate_refresh_token,
     hash_password,
     hash_refresh_token,
+    needs_rehash,
     parse_device_name,
     verify_password,
 )
@@ -175,6 +176,14 @@ async def login(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Your account is awaiting admin approval.",
         )
+
+    # Transparent migration: if the stored hash is bcrypt or weak Argon2,
+    # rehash with current Argon2 defaults on successful login.
+    # Must run after is_active check so inactive users don't trigger a
+    # false "upgraded" log (their session gets rolled back anyway).
+    if needs_rehash(user.password_hash):
+        user.password_hash = hash_password(login_data.password)
+        logger.info(f"Password hash upgraded to Argon2 for user: {user.email}")
 
     # Update last login
     user.last_login_at = datetime.now(UTC)
@@ -377,7 +386,7 @@ async def change_password(
             detail="Current password is incorrect",
         )
 
-    # Update password
+    # Update password (always uses Argon2)
     current_user.password_hash = hash_password(password_data.new_password)
 
     logger.info(f"Password changed for user: {current_user.email}")
