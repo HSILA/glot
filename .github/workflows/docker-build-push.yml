@@ -117,5 +117,4 @@ jobs:
           printf '%s\n' "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "${{ secrets.DEPLOY_HOSTKEY }}" >> ~/.ssh/known_hosts
-          scp -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" scripts/deploy.sh ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }}:~/deploy.sh
-          ssh -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "GLOT_VERSION=$GLOT_VERSION REGISTRY_TOKEN='$REGISTRY_TOKEN' ~/deploy.sh"
+          ssh -i ~/.ssh/deploy_key -o "UserKnownHostsFile=~/.ssh/known_hosts" ${{ secrets.DEPLOY_USER }}@${{ secrets.DEPLOY_HOST }} "GLOT_VERSION=$GLOT_VERSION REGISTRY_TOKEN='$REGISTRY_TOKEN'" bash < scripts/deploy.sh
