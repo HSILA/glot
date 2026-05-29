@@ -84,7 +84,8 @@ if ! docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/nul
 fi
 echo "  ✓ Worker is running"
 
-echo "[9/9] Cleaning old images..."
+echo "[9/9] Cleaning old images and build cache..."
 docker image prune -a -f
+docker builder prune -f
 
 echo "=== Deploy complete ==="
