@@ -3,11 +3,34 @@ Card schemas for API request/response validation.
 """
 
 from datetime import datetime
-from typing import Any
+from enum import StrEnum
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.card import CardState
+
+
+class WordType(StrEnum):
+    """Recognized parts of speech for a card's ``word_type`` metadata."""
+
+    NOUN = "noun"
+    VERB = "verb"
+    ADJECTIVE = "adjective"
+    ADVERB = "adverb"
+    PRONOUN = "pronoun"
+    PREPOSITION = "preposition"
+    CONJUNCTION = "conjunction"
+    INTERJECTION = "interjection"
+    DETERMINER = "determiner"
+    PARTICLE = "particle"
+
+
+class Gender(StrEnum):
+    """Recognized grammatical genders for a card's ``gender`` metadata."""
+
+    MASCULINE = "masculine"
+    FEMININE = "feminine"
+    NEUTER = "neuter"
 
 
 class CardMetadata(BaseModel):
@@ -27,11 +50,14 @@ class CardMetadata(BaseModel):
     phonetics: str | None = Field(
         default=None, description="Pronunciation / phonetic transcription (e.g. IPA)"
     )
-    word_type: str | None = Field(
-        default=None, description="Part of speech, e.g. noun, verb, adjective, adverb"
+    word_type: WordType | None = Field(
+        default=None,
+        description="Part of speech (noun, verb, adjective, adverb, pronoun, "
+        "preposition, conjunction, interjection, determiner, particle)",
     )
-    gender: str | None = Field(
-        default=None, description="Grammatical gender, e.g. masculine, feminine, neuter"
+    gender: Gender | None = Field(
+        default=None,
+        description="Grammatical gender (masculine, feminine, neuter)",
     )
     example: str | None = Field(
         default=None, description="Example sentence using the word/phrase"
@@ -51,9 +77,9 @@ class CardCreate(BaseModel):
     front_content: str = Field(min_length=1, max_length=10000)
     back_content: str = Field(min_length=1, max_length=10000)
     # Free-form metadata; optional language-learning fields (phonetics,
-    # word_type, gender, example, example_translation) are documented by
-    # CardMetadata and passed through when provided.
-    meta_data: dict[str, Any] = Field(default_factory=dict)
+    # word_type, gender, example, example_translation, example_highlight) are
+    # documented and validated by CardMetadata. Unrecognized keys are preserved.
+    meta_data: CardMetadata = Field(default_factory=CardMetadata)
     tags: list[str] = Field(default_factory=list)
     deck_id: int = Field(description="Deck this card belongs to")
 
@@ -63,7 +89,9 @@ class CardUpdate(BaseModel):
 
     front_content: str | None = Field(default=None, min_length=1, max_length=10000)
     back_content: str | None = Field(default=None, min_length=1, max_length=10000)
-    meta_data: dict[str, Any] | None = None
+    # Optional: send to replace metadata (validated by CardMetadata); send null
+    # to clear it. Omit to leave existing metadata untouched.
+    meta_data: CardMetadata | None = None
     tags: list[str] | None = None
     deck_id: int | None = None
 
@@ -76,9 +104,9 @@ class CardRead(BaseModel):
 
     front_content: str
     back_content: str
-    # See CardMetadata for the recognized optional language-learning keys the
+    # CardMetadata documents the recognized optional language-learning keys the
     # review UI displays (all optional; other keys are preserved as-is).
-    meta_data: dict[str, Any]
+    meta_data: CardMetadata
     tags: list[str]
     deck_id: int | None
 

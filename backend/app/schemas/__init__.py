@@ -20,9 +20,11 @@ from .card import (
     CardMetadata,
     CardRead,
     CardUpdate,
+    Gender,
     NextStatesResponse,
     ReviewRequest,
     ReviewResponse,
+    WordType,
 )
 from .deck import DeckCreate, DeckRead, DeckUpdate
 from .resource import (
@@ -55,6 +57,8 @@ __all__ = [
     "CardListResponse",
     "CardMetadata",
     "CardUpdate",
+    "Gender",
+    "WordType",
     "ReviewRequest",
     "ReviewResponse",
     "NextStatesResponse",
