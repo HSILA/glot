@@ -247,6 +247,11 @@ async def create_card(
     next_sequence = (await session.execute(next_sequence_query)).scalar_one()
 
     payload = card_data.model_dump()
+    # Persist recognized language fields without None-noise and with enums
+    # (gender/word_type) serialized to plain strings; legacy keys are preserved.
+    payload["meta_data"] = card_data.meta_data.model_dump(
+        mode="json", exclude_none=True
+    )
     payload["sequence"] = int(next_sequence)
 
     card = Card(**payload)
@@ -270,6 +275,16 @@ async def update_card(
         raise HTTPException(status_code=404, detail="Card not found")
 
     update_data = card_data.model_dump(exclude_unset=True)
+
+    if "meta_data" in update_data:
+        # Normalize metadata to clean JSONB: drop None-valued known fields and
+        # serialize enums to plain strings. An explicit null clears it to {} so
+        # we never violate the non-nullable column.
+        update_data["meta_data"] = (
+            card_data.meta_data.model_dump(mode="json", exclude_none=True)
+            if card_data.meta_data is not None
+            else {}
+        )
 
     if "deck_id" in update_data:
         if update_data["deck_id"] is None:
