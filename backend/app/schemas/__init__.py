@@ -17,6 +17,7 @@ from .auth import (
 from .card import (
     CardCreate,
     CardListResponse,
+    CardMetadata,
     CardRead,
     CardUpdate,
     NextStatesResponse,
@@ -52,6 +53,7 @@ __all__ = [
     "CardCreate",
     "CardRead",
     "CardListResponse",
+    "CardMetadata",
     "CardUpdate",
     "ReviewRequest",
     "ReviewResponse",

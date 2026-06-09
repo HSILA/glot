@@ -7,6 +7,8 @@ import { Icon } from "@/components/glot/icon";
 import { cn } from "@/lib/utils";
 import { cardsApi, type Card } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
+import { readCardMeta } from "@/lib/cards/meta";
+import { CardExample, CardGrammar, CardPhonetic } from "./card-meta-details";
 import { getSessionProgress } from "./session-progress";
 import { advanceQueue, shouldRequeue, type Rating } from "./session-queue";
 import { clearSessionSeed, getOrCreateSessionSeed } from "./session-seed";
@@ -58,6 +60,7 @@ export default function SessionPage() {
   const isSubmittingRef = useRef(false);
 
   const currentCard = queue[0];
+  const currentMeta = useMemo(() => readCardMeta(currentCard?.meta_data), [currentCard]);
   const deckById = useMemo(() => new Map(decks.map((deck) => [deck.id, deck])), [decks]);
   const currentDeck = currentCard?.deck_id ? deckById.get(currentCard.deck_id) : undefined;
   const { cardNumber, totalCards, progressPercent, estimatedMinutes } = getSessionProgress({
@@ -270,6 +273,11 @@ export default function SessionPage() {
                   <h2 className="serif" style={{ fontSize: "clamp(36px, 6vw, 64px)", fontWeight: 500, lineHeight: 1.1, letterSpacing: "-0.03em", color: "var(--fg)" }}>
                     {formatContent(currentCard.front_content)}
                   </h2>
+                  {currentMeta.phonetics ? (
+                    <div style={{ marginTop: 16 }}>
+                      <CardPhonetic meta={currentMeta} size={16} />
+                    </div>
+                  ) : null}
                   <div className="mt-auto pt-8 mono flex items-center gap-2" style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.08em" }}>
                     TAP OR PRESS <kbd>SPACE</kbd>
                   </div>
@@ -277,12 +285,14 @@ export default function SessionPage() {
 
                 <div className="absolute inset-0 backface-hidden rotate-y-180 glot-card flex flex-col items-center justify-center p-10 text-center" style={{ background: "var(--surface)", borderColor: "color-mix(in oklab, var(--accent) 35%, var(--line))", boxShadow: "0 30px 80px -40px var(--accent-glow)" }}>
                   <div className="mono mb-4" style={{ fontSize: 11, color: "var(--accent)", letterSpacing: "0.16em" }}>ANSWER</div>
-                  <h3 className="serif" style={{ fontSize: 28, fontWeight: 500, color: "var(--accent)", marginBottom: 16 }}>
+                  <h3 className="serif" style={{ fontSize: 28, fontWeight: 500, color: "var(--accent)", marginBottom: 8 }}>
                     {formatContent(currentCard.front_content)}
                   </h3>
-                  <p className="serif whitespace-pre-line max-w-xl" style={{ fontSize: 19, lineHeight: 1.5, color: "var(--fg)", fontWeight: 400 }}>
+                  <CardGrammar meta={currentMeta} />
+                  <p className="serif whitespace-pre-line max-w-xl" style={{ fontSize: 19, lineHeight: 1.5, color: "var(--fg)", fontWeight: 400, marginTop: 16 }}>
                     {formatContent(currentCard.back_content)}
                   </p>
+                  <CardExample meta={currentMeta} />
                 </div>
               </div>
             </div>
