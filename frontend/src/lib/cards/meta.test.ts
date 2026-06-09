@@ -81,17 +81,22 @@ describe("hasCardMeta / hasGrammarMeta", () => {
 });
 
 describe("classifyGender", () => {
-  test("recognizes masculine forms and abbreviations", () => {
-    for (const v of ["m", "masc", "masculine", "der", "MASCULIN"]) {
-      expect(classifyGender(v)).toBe("masculine");
-    }
+  test("maps each enum value to its tone", () => {
+    expect(classifyGender("masculine")).toBe("masculine");
+    expect(classifyGender("feminine")).toBe("feminine");
+    expect(classifyGender("neuter")).toBe("neuter");
   });
 
-  test("recognizes feminine and neuter forms", () => {
-    expect(classifyGender("f")).toBe("feminine");
+  test("tolerates surrounding whitespace and casing", () => {
+    expect(classifyGender("  masculine ")).toBe("masculine");
     expect(classifyGender("Feminine")).toBe("feminine");
-    expect(classifyGender("neuter")).toBe("neuter");
-    expect(classifyGender("das")).toBe("neuter");
+  });
+
+  test("no longer matches abbreviations or articles", () => {
+    // These were accepted before; the backend enum makes them invalid input.
+    for (const v of ["m", "masc", "der", "la", "das", "f", "n"]) {
+      expect(classifyGender(v)).toBe("other");
+    }
   });
 
   test("falls back to 'other' for unrecognized values", () => {

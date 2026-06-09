@@ -11,9 +11,9 @@
 export interface CardMeta {
   /** Pronunciation / phonetic transcription (e.g. IPA). */
   phonetics?: string;
-  /** Part of speech, e.g. noun, verb, adjective, adverb. */
+  /** Part of speech. Backend constrains this to a known set (noun, verb, …). */
   wordType?: string;
-  /** Grammatical gender, e.g. masculine, feminine, neuter (free text). */
+  /** Grammatical gender. Backend constrains this to masculine/feminine/neuter. */
   gender?: string;
   /** Example sentence using the word/phrase. */
   example?: string;
@@ -76,17 +76,22 @@ export function hasGrammarMeta(meta: CardMeta): boolean {
 export type GenderTone = "masculine" | "feminine" | "neuter" | "other";
 
 /**
- * Classify a free-text grammatical gender so the UI can pick a consistent
- * accent dot and short label. Accepts common forms and abbreviations
- * (e.g. "m", "masc", "masculine", "der") across a few languages; anything
- * unrecognized falls back to "other" and is displayed verbatim.
+ * Map a grammatical gender to a UI tone (accent dot + short label). The backend
+ * now constrains gender to the `masculine`/`feminine`/`neuter` enum, so this is
+ * a direct lookup; any unexpected value falls back to "other" and is displayed
+ * verbatim (defensive fallback for legacy/dirty data).
  */
 export function classifyGender(value: string): GenderTone {
-  const v = value.trim().toLowerCase();
-  if (/^(m|masc|masculine|masculin|männlich|der|el|il|le)\b/.test(v)) return "masculine";
-  if (/^(f|fem|feminine|féminin|weiblich|die|la)\b/.test(v)) return "feminine";
-  if (/^(n|neut|neuter|neutral|sächlich|das)\b/.test(v)) return "neuter";
-  return "other";
+  switch (value.trim().toLowerCase()) {
+    case "masculine":
+      return "masculine";
+    case "feminine":
+      return "feminine";
+    case "neuter":
+      return "neuter";
+    default:
+      return "other";
+  }
 }
 
 export interface HighlightSegment {

@@ -11,6 +11,8 @@
  * review flow is unchanged.
  */
 
+import type { CSSProperties } from "react";
+
 import {
   classifyGender,
   hasGrammarMeta,
@@ -18,6 +20,21 @@ import {
   type CardMeta,
   type GenderTone,
 } from "@/lib/cards/meta";
+
+/**
+ * Clamp text to `lines` lines with an ellipsis on overflow. Keeps long metadata
+ * from pushing the card taller, with no scrollbars (`overflow: hidden`).
+ */
+function lineClamp(lines: number): CSSProperties {
+  return {
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    display: "-webkit-box",
+    WebkitLineClamp: lines,
+    WebkitBoxOrient: "vertical",
+    maxWidth: "100%",
+  };
+}
 
 const GENDER_DOT: Record<GenderTone, string> = {
   masculine: "var(--info)",
@@ -46,11 +63,11 @@ function GenderPill({ gender }: { gender: string }) {
   );
 }
 
-/** Pronunciation in mono. Renders nothing when absent. */
+/** Pronunciation in mono. Renders nothing when absent. Clamped to 1 line. */
 export function CardPhonetic({ meta, size = 14 }: { meta: CardMeta; size?: number }) {
   if (!meta.phonetics) return null;
   return (
-    <span className="mono" style={{ fontSize: size, color: "var(--muted)" }}>
+    <span className="mono" style={{ fontSize: size, color: "var(--muted)", ...lineClamp(1) }}>
       {meta.phonetics}
     </span>
   );
@@ -92,7 +109,7 @@ export function CardExample({ meta }: { meta: CardMeta }) {
       {meta.example ? (
         <p
           className="serif"
-          style={{ fontStyle: "italic", fontSize: 17, lineHeight: 1.6, color: "var(--fg-1)" }}
+          style={{ fontStyle: "italic", fontSize: 17, lineHeight: 1.6, color: "var(--fg-1)", ...lineClamp(2) }}
         >
           {splitHighlight(meta.example, meta.exampleHighlight).map((seg, i) =>
             seg.highlight ? (
@@ -106,7 +123,7 @@ export function CardExample({ meta }: { meta: CardMeta }) {
         </p>
       ) : null}
       {meta.exampleTranslation ? (
-        <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 6 }}>
+        <p style={{ fontSize: 14, color: "var(--muted)", marginTop: 6, ...lineClamp(2) }}>
           {meta.exampleTranslation}
         </p>
       ) : null}
