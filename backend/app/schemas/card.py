@@ -39,6 +39,10 @@ class CardMetadata(BaseModel):
     example_translation: str | None = Field(
         default=None, description="Translation of the example sentence"
     )
+    example_highlight: str | None = Field(
+        default=None,
+        description="Substring of the example to emphasize (usually the target word)",
+    )
 
 
 class CardCreate(BaseModel):

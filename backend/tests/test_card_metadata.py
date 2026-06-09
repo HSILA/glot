@@ -27,6 +27,7 @@ def test_metadata_accepts_language_fields():
             "gender": "masculine",
             "example": "Le chat dort.",
             "example_translation": "The cat sleeps.",
+            "example_highlight": "chat",
         }
     )
 
@@ -35,6 +36,7 @@ def test_metadata_accepts_language_fields():
     assert meta.gender == "masculine"
     assert meta.example == "Le chat dort."
     assert meta.example_translation == "The cat sleeps."
+    assert meta.example_highlight == "chat"
 
 
 def test_metadata_preserves_unrelated_keys():
