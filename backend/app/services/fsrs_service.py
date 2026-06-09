@@ -22,6 +22,11 @@ from fsrs_rs_python import DEFAULT_PARAMETERS, FSRS, MemoryState
 from app.models.card import Card, CardState
 from app.schemas.card import NextStatesResponse, SchedulingInfo
 
+# Rating Again should keep the failed card due immediately today. The frontend
+# controls active-session spacing; this persisted timestamp preserves the retry
+# if the browser session is interrupted.
+AGAIN_RETRY_DELAY = timedelta(0)
+
 if TYPE_CHECKING:
     from fsrs_rs_python import NextStates
 
@@ -156,7 +161,9 @@ class FSRSService:
         }
         selected_state = rating_map[rating]
 
-        # Calculate new interval (capped by maximum)
+        # Calculate new interval (capped by maximum). Passing ratings stay on the
+        # existing day-based schedule; Again is persisted as due immediately so
+        # an interrupted session still surfaces the failed card today.
         interval_days = min(
             int(max(1, round(selected_state.interval))),
             self.maximum_interval_days,
@@ -179,7 +186,10 @@ class FSRSService:
         # Update timestamps
         now = datetime.now(UTC)
         card.last_review_at = now
-        card.next_review_at = now + timedelta(days=interval_days)
+        if rating == 1:
+            card.next_review_at = now + AGAIN_RETRY_DELAY
+        else:
+            card.next_review_at = now + timedelta(days=interval_days)
         card.updated_at = now
 
         return card, scheduled_days, elapsed_days
