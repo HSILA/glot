@@ -12,6 +12,7 @@
  *   - Empty due-cards list (the "All caught up" state)
  *   - reviewCard sends all four rating values (1-4) plus review_duration_ms
  *   - reviewCard failure surfaces a meaningful error message
+ *   - the in-session queue requeues failed cards and tracks progress correctly
  *
  * What is NOT covered here (requires a DOM/React render environment):
  *   - Rating buttons are visible only after the card is flipped
@@ -28,6 +29,12 @@ import {
   type NextStatesResponse,
 } from "@/lib/api/cards";
 import { getSessionProgress } from "./session-progress";
+import {
+  advanceQueue,
+  shouldRequeue,
+  REQUEUE_RATINGS,
+  REQUEUE_GAP,
+} from "./session-queue";
 import {
   installFetchMock,
   installWindowMock,
@@ -174,5 +181,77 @@ describe("session — rating a card", () => {
     await expect(
       cardsApi.reviewCard(999, { rating: 1, review_duration_ms: 1000 }),
     ).rejects.toThrow("Card not found");
+  });
+});
+
+describe("session — in-session requeue", () => {
+  test("Again is the only requeue rating by default", () => {
+    expect(REQUEUE_RATINGS).toEqual([1]);
+    expect(shouldRequeue(1)).toBe(true);
+    expect(shouldRequeue(2)).toBe(false);
+    expect(shouldRequeue(3)).toBe(false);
+    expect(shouldRequeue(4)).toBe(false);
+  });
+
+  test.each([2, 3, 4] as const)(
+    "a passing rating (%i) removes the head card from the queue",
+    (rating) => {
+      expect(advanceQueue(["a", "b", "c"], rating)).toEqual(["b", "c"]);
+    },
+  );
+
+  test("Again reinserts the failed card behind the requeue gap", () => {
+    // Gap of 1 so the reinserted position is easy to assert.
+    expect(advanceQueue(["a", "b", "c", "d"], 1, 1)).toEqual(["b", "a", "c", "d"]);
+  });
+
+  test("Again uses the default gap of 3 when not overridden", () => {
+    const queue = ["a", "b", "c", "d", "e"];
+    expect(REQUEUE_GAP).toBe(3);
+    expect(advanceQueue(queue, 1)).toEqual(["b", "c", "d", "a", "e"]);
+  });
+
+  test("a failed card is appended at the end when fewer cards than the gap remain", () => {
+    expect(advanceQueue(["a", "b"], 1, 3)).toEqual(["b", "a"]);
+  });
+
+  test("the only remaining card keeps being shown until it is passed", () => {
+    expect(advanceQueue(["a"], 1)).toEqual(["a"]);
+    expect(advanceQueue(["a"], 3)).toEqual([]);
+  });
+
+  test("does not mutate the input queue", () => {
+    const queue = ["a", "b", "c"];
+    advanceQueue(queue, 1, 1);
+    expect(queue).toEqual(["a", "b", "c"]);
+  });
+
+  test("progress counts distinct passed cards and never overflows when cards requeue", () => {
+    // Session of 2 cards. Card A is failed once (requeued), then both pass.
+    // Completed count must reach exactly the session total, never exceed it.
+    const total = 2;
+    let queue = ["a", "b"];
+    let completed = 0;
+
+    const rate = (rating: 1 | 2 | 3 | 4) => {
+      queue = advanceQueue(queue, rating);
+      if (!shouldRequeue(rating)) completed = Math.min(completed + 1, total);
+    };
+
+    rate(1); // A failed → requeued, not counted
+    expect(completed).toBe(0);
+    expect(queue).toEqual(["b", "a"]);
+
+    rate(3); // B passed
+    rate(3); // A passed
+    expect(completed).toBe(2);
+    expect(queue).toEqual([]);
+
+    expect(getSessionProgress({ sessionTotal: total, reviewedCount: completed, hasCurrentCard: false })).toMatchObject({
+      cardNumber: 2,
+      totalCards: 2,
+      progressPercent: 100,
+      remaining: 0,
+    });
   });
 });

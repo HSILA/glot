@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { cardsApi, type Card } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
 import { getSessionProgress } from "./session-progress";
+import { advanceQueue, shouldRequeue, type Rating } from "./session-queue";
 
 const ratingButtons = [
   { label: "Again", rating: 1, shortcut: "1", description: "Retry soon", tone: "bad" as const },
@@ -38,25 +39,29 @@ export default function SessionPage() {
   const searchParams = useSearchParams();
   const deckId = parseDeckId(searchParams.get("deck_id"));
 
-  const [cards, setCards] = useState<Card[]>([]);
+  // Cards are held in an explicit ordered queue; the head (index 0) is shown.
+  // A failed card is requeued behind the head, so the queue can outlive a
+  // single pass over the loaded cards (see session-queue.ts).
+  const [queue, setQueue] = useState<Card[]>([]);
   const [decks, setDecks] = useState<Deck[]>([]);
-  const [currentIndex, setCurrentIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [isAnimating, setIsAnimating] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [sessionTotal, setSessionTotal] = useState(0);
-  const [reviewedCount, setReviewedCount] = useState(0);
+  // Distinct cards passed out of the session. Requeued cards are not counted
+  // until they finally get a passing rating, so progress never overflows.
+  const [completedCount, setCompletedCount] = useState(0);
   const [startedAt, setStartedAt] = useState<number>(() => Date.now());
   const isSubmittingRef = useRef(false);
 
-  const currentCard = cards[currentIndex];
+  const currentCard = queue[0];
   const deckById = useMemo(() => new Map(decks.map((deck) => [deck.id, deck])), [decks]);
   const currentDeck = currentCard?.deck_id ? deckById.get(currentCard.deck_id) : undefined;
   const { cardNumber, totalCards, progressPercent, estimatedMinutes } = getSessionProgress({
     sessionTotal,
-    reviewedCount,
+    reviewedCount: completedCount,
     hasCurrentCard: Boolean(currentCard),
   });
 
@@ -64,9 +69,8 @@ export default function SessionPage() {
     setLoading(true);
     setError(null);
     setIsFlipped(false);
-    setCurrentIndex(0);
     setSessionTotal(0);
-    setReviewedCount(0);
+    setCompletedCount(0);
     setIsSubmitting(false);
     isSubmittingRef.current = false;
 
@@ -75,7 +79,7 @@ export default function SessionPage() {
         cardsApi.getDueCards({ deck_id: deckId, limit: 100 }),
         decksApi.listDecks(),
       ]);
-      setCards(dueCards);
+      setQueue(dueCards);
       setDecks(allDecks);
       setSessionTotal(dueCards.length);
       setStartedAt(Date.now());
@@ -99,21 +103,25 @@ export default function SessionPage() {
   }, [currentCard, isAnimating, isSubmitting]);
 
   const handleRate = useCallback(
-    async (rating: 1 | 2 | 3 | 4) => {
+    async (rating: Rating) => {
       if (!currentCard || isSubmittingRef.current) return;
 
       isSubmittingRef.current = true;
       setIsSubmitting(true);
       setError(null);
       try {
+        // Exactly one review is recorded per rating, even for requeued cards.
         await cardsApi.reviewCard(currentCard.id, {
           rating,
           review_duration_ms: Date.now() - startedAt,
         });
 
-        setCards((existingCards) => existingCards.filter((card) => card.id !== currentCard.id));
-        setCurrentIndex(0);
-        setReviewedCount((count) => Math.min(count + 1, sessionTotal));
+        // Passing ratings drop the card and advance progress; a failed card is
+        // reinserted later in the queue and does not count as completed yet.
+        setQueue((existingQueue) => advanceQueue(existingQueue, rating));
+        if (!shouldRequeue(rating)) {
+          setCompletedCount((count) => Math.min(count + 1, sessionTotal));
+        }
         setIsFlipped(false);
         setStartedAt(Date.now());
       } catch (err) {
