@@ -7,6 +7,8 @@ import { Icon } from "@/components/glot/icon";
 import { cn } from "@/lib/utils";
 import { cardsApi, type Card } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
+import { readCardMeta } from "@/lib/cards/meta";
+import { CardMetaDetails } from "./card-meta-details";
 import { getSessionProgress } from "./session-progress";
 import { advanceQueue, shouldRequeue, type Rating } from "./session-queue";
 import { clearSessionSeed, getOrCreateSessionSeed } from "./session-seed";
@@ -283,6 +285,7 @@ export default function SessionPage() {
                   <p className="serif whitespace-pre-line max-w-xl" style={{ fontSize: 19, lineHeight: 1.5, color: "var(--fg)", fontWeight: 400 }}>
                     {formatContent(currentCard.back_content)}
                   </p>
+                  <CardMetaDetails meta={readCardMeta(currentCard.meta_data)} />
                 </div>
               </div>
             </div>
