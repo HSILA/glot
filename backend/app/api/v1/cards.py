@@ -17,8 +17,8 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from loguru import logger
+from sqlalchemy import case, func
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import func
 from sqlmodel import select
 
 from app.core import get_settings
@@ -37,6 +37,7 @@ from app.schemas import (
 )
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
+from app.services.review_queue import order_due_cards
 
 router = APIRouter()
 
@@ -153,12 +154,23 @@ async def get_due_cards(
     current_user: Annotated[User, Depends(get_current_user)],
     limit: int = Query(20, ge=1, le=100),
     deck_id: int | None = None,
+    seed: int | None = Query(
+        None,
+        description="Optional RNG seed for a stable queue order across requests. "
+        "Omit to randomise the order on every request.",
+    ),
 ):
     """
     Get cards due for review.
 
     Returns cards where next_review_at <= now, plus new cards.
-    Ordered by: overdue cards first (oldest), then new cards.
+
+    Selection (which cards fit within `limit`) is priority-based:
+    learning/relearning first, then most-overdue reviews, then new cards.
+
+    Presentation order is non-sequential: learning/relearning come first, then
+    review and new cards are shuffled and interleaved so the queue does not
+    follow a fixed deterministic order. Pass `seed` for a stable order.
     """
     if deck_id is not None:
         deck = await _get_owned_deck(session, deck_id, current_user.id)
@@ -179,11 +191,22 @@ async def get_due_cards(
     if deck_id:
         query = query.where(Card.deck_id == deck_id)
 
-    # Order: overdue first (most overdue at top), then new
-    query = query.order_by(Card.next_review_at.asc().nullsfirst()).limit(limit)
+    # Priority for which cards make the `limit` cut: learning/relearning first,
+    # then due reviews, then new. Within a tier, most-overdue first so we never
+    # randomly drop overdue cards. Presentation order is randomised afterwards.
+    priority = case(
+        (Card.state.in_((CardState.LEARNING, CardState.RELEARNING)), 0),
+        (Card.state == CardState.REVIEW, 1),
+        else_=2,
+    )
+    query = query.order_by(
+        priority.asc(), Card.next_review_at.asc().nullsfirst()
+    ).limit(limit)
 
     result = await session.execute(query)
-    return result.scalars().all()
+    due_cards = result.scalars().all()
+
+    return order_due_cards(due_cards, seed=seed)
 
 
 @router.get("/{card_id}", response_model=CardRead)

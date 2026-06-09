@@ -154,6 +154,33 @@ describe("cardsApi.getDueCards", () => {
       "/api/v1/cards/due?deck_id=3&limit=5",
     );
   });
+
+  test("includes seed when provided", async () => {
+    fetchMock.enqueue(() => jsonResponse([]));
+
+    await cardsApi.getDueCards({ deck_id: 3, limit: 5, seed: 12345 });
+
+    const url = new URL(fetchMock.calls[0].url, "http://localhost");
+    expect(url.searchParams.get("seed")).toBe("12345");
+  });
+
+  test("sends seed 0 (a valid seed, not omitted as falsy)", async () => {
+    fetchMock.enqueue(() => jsonResponse([]));
+
+    await cardsApi.getDueCards({ seed: 0 });
+
+    const url = new URL(fetchMock.calls[0].url, "http://localhost");
+    expect(url.searchParams.get("seed")).toBe("0");
+  });
+
+  test("omits seed when not provided", async () => {
+    fetchMock.enqueue(() => jsonResponse([]));
+
+    await cardsApi.getDueCards({ deck_id: 3, limit: 5 });
+
+    const url = new URL(fetchMock.calls[0].url, "http://localhost");
+    expect(url.searchParams.has("seed")).toBe(false);
+  });
 });
 
 describe("cardsApi.updateCard", () => {
