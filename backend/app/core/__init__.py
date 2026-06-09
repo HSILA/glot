@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "Glot API"
-    app_version: str = "0.2.0"  # x-release-please-version
+    app_version: str = "0.3.0"  # x-release-please-version
     debug: bool = False
 
     # Database

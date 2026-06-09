@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.3.0](https://github.com/HSILA/glot/compare/v0.2.0...v0.3.0) (2026-06-09)
+
+
+### Features
+
+* **frontend:** requeue failed cards during study sessions ([#88](https://github.com/HSILA/glot/issues/88)) ([9b306aa](https://github.com/HSILA/glot/commit/9b306aa9d1fcf106fc430af46215acaa14bf8cec))
+* randomize and stabilize review queue ordering ([#89](https://github.com/HSILA/glot/issues/89)) ([9a56c21](https://github.com/HSILA/glot/commit/9a56c215d365dd05d1dd6fe0bde751a448a8c4cf))
+* **review:** show optional language-learning fields on review cards ([#90](https://github.com/HSILA/glot/issues/90)) ([8dc4896](https://github.com/HSILA/glot/commit/8dc4896a7c58cf88a529f2c2d45c28580725f26b))
+* **review:** wire CardMetadata into API schemas, add Gender/WordType enums, CSS line-clamp ([#91](https://github.com/HSILA/glot/issues/91)) ([edcbb3d](https://github.com/HSILA/glot/commit/edcbb3de38cfdf4f00f6804e540580f4e2579c54))
+
+
+### Bug Fixes
+
+* **infra:** stop containers before deploy to avoid name conflicts ([#84](https://github.com/HSILA/glot/issues/84)) ([9c90089](https://github.com/HSILA/glot/commit/9c90089a606d0684793e695bf85bae37256fc141))
+
+
+### Miscellaneous Chores
+
+* **infra:** timestamp production deploy steps ([#92](https://github.com/HSILA/glot/issues/92)) ([0da38d4](https://github.com/HSILA/glot/commit/0da38d4c882a4b7947c1bd79ec9515bd14bccead))
+
 ## [0.2.0](https://github.com/HSILA/glot/compare/v0.1.0...v0.2.0) (2026-05-28)
 
 
