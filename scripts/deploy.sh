@@ -71,7 +71,12 @@ docker compose -f "$COMPOSE_FILE" down --remove-orphans
 finish_step
 
 start_step "[4/9] Running database migrations"
-docker compose -f "$COMPOSE_FILE" run --rm backend uv run alembic upgrade head
+# -T disables pseudo-TTY allocation and, crucially, prevents `run` from
+# attaching to stdin. This script is streamed to the remote shell as stdin
+# (`bash < scripts/deploy.sh`); without -T, `docker compose run` consumes the
+# remainder of the script, so bash never reads the steps below and services
+# are never restarted.
+docker compose -f "$COMPOSE_FILE" run -T --rm backend uv run alembic upgrade head
 finish_step
 
 start_step "[5/9] Starting services"
