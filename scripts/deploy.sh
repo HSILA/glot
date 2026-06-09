@@ -88,13 +88,14 @@ for i in $(seq 1 30); do
   fi
   if [ "$i" -eq 30 ]; then
     log "  ✗ Backend health check failed after 30 attempts"
+    break
   fi
   sleep 2
 done
 
 if [ "$HEALTH_OK" = "false" ]; then
   log "  ✗ Deploy failed — backend unhealthy"
-  docker compose -f "$COMPOSE_FILE" logs --tail=50 backend
+  docker compose -f "$COMPOSE_FILE" logs --tail=50 backend || true
   fail_step
   # Do not rollback: alembic already migrated the DB, old code may conflict
   # with the new schema.  Leave containers down and alert.
@@ -112,13 +113,14 @@ for i in $(seq 1 15); do
   fi
   if [ "$i" -eq 15 ]; then
     log "  ✗ Frontend health check failed after 15 attempts"
+    break
   fi
   sleep 2
 done
 
 if [ "$FRONTEND_OK" = "false" ]; then
   log "  ✗ Deploy failed — frontend unhealthy"
-  docker compose -f "$COMPOSE_FILE" logs --tail=50 frontend
+  docker compose -f "$COMPOSE_FILE" logs --tail=50 frontend || true
   fail_step
   exit 1
 fi
@@ -127,7 +129,7 @@ finish_step
 start_step "[8/9] Health check worker"
 if ! docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -q '^worker$'; then
   log "  ✗ Worker not running"
-  docker compose -f "$COMPOSE_FILE" logs --tail=50 worker
+  docker compose -f "$COMPOSE_FILE" logs --tail=50 worker || true
   fail_step
   exit 1
 fi
