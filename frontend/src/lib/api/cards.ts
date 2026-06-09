@@ -40,6 +40,13 @@ export interface CardListResponse {
 export interface DueCardsOptions {
   deck_id?: number;
   limit?: number;
+  /**
+   * Optional RNG seed for a stable presentation order across requests. With the
+   * same due-card set, the same seed yields the same order, so an interrupted
+   * study session (reload, tab close) resumes in the same order. Omit to let the
+   * backend randomise the order on every request.
+   */
+  seed?: number;
 }
 
 export interface CreateCardRequest {
@@ -223,6 +230,10 @@ class CardsApi {
       params.set("deck_id", String(options.deck_id));
     }
     params.set("limit", String(options.limit ?? 20));
+    // Send 0 too: it is a valid seed, so guard on `undefined`, not falsiness.
+    if (options.seed !== undefined) {
+      params.set("seed", String(options.seed));
+    }
 
     const query = params.toString();
     const response = await fetchWithAuth(`${API_BASE}/due${query ? `?${query}` : ""}`, {

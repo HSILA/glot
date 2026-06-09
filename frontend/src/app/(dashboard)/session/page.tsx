@@ -9,6 +9,7 @@ import { cardsApi, type Card } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
 import { getSessionProgress } from "./session-progress";
 import { advanceQueue, shouldRequeue, type Rating } from "./session-queue";
+import { clearSessionSeed, getOrCreateSessionSeed } from "./session-seed";
 
 const ratingButtons = [
   { label: "Again", rating: 1, shortcut: "1", description: "Retry soon", tone: "bad" as const },
@@ -75,8 +76,12 @@ export default function SessionPage() {
     isSubmittingRef.current = false;
 
     try {
+      // Reuse a stable per-session seed so an interrupted session (reload, tab
+      // close) resumes in the same order rather than reshuffling. Scoped per
+      // deck (and mixed review) so switching scopes gets its own order.
+      const seed = getOrCreateSessionSeed(window.localStorage, deckId);
       const [dueCards, allDecks] = await Promise.all([
-        cardsApi.getDueCards({ deck_id: deckId, limit: 100 }),
+        cardsApi.getDueCards({ deck_id: deckId, limit: 100, seed }),
         decksApi.listDecks(),
       ]);
       setQueue(dueCards);
@@ -93,6 +98,17 @@ export default function SessionPage() {
   useEffect(() => {
     void loadSession();
   }, [loadSession]);
+
+  useEffect(() => {
+    // Once the loaded cards are all worked through, the logical session is over,
+    // so drop the seed and let the next session pick a fresh order. Guard on
+    // loading/error: a transient empty queue during a (re)load or after a failed
+    // fetch must not clear a seed an in-progress session still needs.
+    if (loading || error) return;
+    if (queue.length === 0) {
+      clearSessionSeed(window.localStorage, deckId);
+    }
+  }, [loading, error, queue.length, deckId]);
 
   const handleFlip = useCallback(() => {
     if (!currentCard || isAnimating || isSubmitting) return;

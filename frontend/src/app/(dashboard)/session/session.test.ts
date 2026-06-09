@@ -13,6 +13,7 @@
  *   - reviewCard sends all four rating values (1-4) plus review_duration_ms
  *   - reviewCard failure surfaces a meaningful error message
  *   - the in-session queue requeues failed cards and tracks progress correctly
+ *   - the per-session seed is scoped, persisted, reused, and cleared correctly
  *
  * What is NOT covered here (requires a DOM/React render environment):
  *   - Rating buttons are visible only after the card is flipped
@@ -35,6 +36,14 @@ import {
   REQUEUE_RATINGS,
   REQUEUE_GAP,
 } from "./session-queue";
+import {
+  clearSessionSeed,
+  getOrCreateSessionSeed,
+  MAX_SEED,
+  randomSeed,
+  sessionSeedKey,
+  type SeedStorage,
+} from "./session-seed";
 import {
   installFetchMock,
   installWindowMock,
@@ -253,5 +262,102 @@ describe("session — in-session requeue", () => {
       progressPercent: 100,
       remaining: 0,
     });
+  });
+});
+
+/** In-memory `SeedStorage` standing in for browser storage. */
+function makeStorage(initial: Record<string, string> = {}): SeedStorage & {
+  store: Map<string, string>;
+} {
+  const store = new Map(Object.entries(initial));
+  return {
+    store,
+    getItem: (key) => store.get(key) ?? null,
+    setItem: (key, value) => void store.set(key, value),
+    removeItem: (key) => void store.delete(key),
+  };
+}
+
+describe("session — per-session seed", () => {
+  test("scopes the storage key per deck, and apart from mixed review", () => {
+    const mixed = sessionSeedKey(undefined);
+    const deck1 = sessionSeedKey(1);
+    const deck2 = sessionSeedKey(2);
+
+    expect(new Set([mixed, deck1, deck2]).size).toBe(3);
+    // Stable across calls so reload reads back the same slot.
+    expect(sessionSeedKey(1)).toBe(deck1);
+  });
+
+  test("randomSeed stays a non-negative integer within seed bounds", () => {
+    expect(MAX_SEED).toBe(0x7fffffff);
+    for (let i = 0; i < 1000; i += 1) {
+      const seed = randomSeed();
+      expect(Number.isInteger(seed)).toBe(true);
+      expect(seed).toBeGreaterThanOrEqual(0);
+      expect(seed).toBeLessThanOrEqual(MAX_SEED);
+    }
+  });
+
+  test("creates and persists a fresh seed when none is stored", () => {
+    const storage = makeStorage();
+
+    const seed = getOrCreateSessionSeed(storage, 7, () => 42);
+
+    expect(seed).toBe(42);
+    expect(storage.getItem(sessionSeedKey(7))).toBe("42");
+  });
+
+  test("reuses the stored seed across calls (interruption-friendly)", () => {
+    const storage = makeStorage();
+    const generate = () => Math.floor(Math.random() * MAX_SEED);
+
+    const first = getOrCreateSessionSeed(storage, 7, generate);
+    const second = getOrCreateSessionSeed(storage, 7, generate);
+
+    expect(second).toBe(first);
+  });
+
+  test("deck and mixed sessions keep independent seeds", () => {
+    const storage = makeStorage();
+
+    const deckSeed = getOrCreateSessionSeed(storage, 7, () => 11);
+    const mixedSeed = getOrCreateSessionSeed(storage, undefined, () => 22);
+
+    expect(deckSeed).toBe(11);
+    expect(mixedSeed).toBe(22);
+  });
+
+  test("regenerates when the stored value is corrupt", () => {
+    const storage = makeStorage({ [sessionSeedKey(7)]: "not-a-number" });
+
+    const seed = getOrCreateSessionSeed(storage, 7, () => 99);
+
+    expect(seed).toBe(99);
+    expect(storage.getItem(sessionSeedKey(7))).toBe("99");
+  });
+
+  test("regenerates when the stored value is outside backend seed bounds", () => {
+    const storage = makeStorage({ [sessionSeedKey(7)]: String(MAX_SEED + 1) });
+
+    const seed = getOrCreateSessionSeed(storage, 7, () => 123);
+
+    expect(seed).toBe(123);
+    expect(storage.getItem(sessionSeedKey(7))).toBe("123");
+  });
+
+  test("clearing drops only the matching scope's seed", () => {
+    const storage = makeStorage();
+    getOrCreateSessionSeed(storage, 7, () => 11);
+    getOrCreateSessionSeed(storage, undefined, () => 22);
+
+    clearSessionSeed(storage, 7);
+
+    expect(storage.getItem(sessionSeedKey(7))).toBeNull();
+    expect(storage.getItem(sessionSeedKey(undefined))).toBe("22");
+
+    // After clearing, the next session draws a fresh seed.
+    const fresh = getOrCreateSessionSeed(storage, 7, () => 33);
+    expect(fresh).toBe(33);
   });
 });
