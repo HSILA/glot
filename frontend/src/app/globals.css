@@ -249,6 +249,19 @@ kbd {
   color: var(--fg-1);
 }
 
+/* Keyboard shortcut hints are only useful on devices with a physical
+   keyboard, so gate them on a precise pointer + hover (a real mouse).
+   Touch and tablet layouts get touch-first wording instead — this keys
+   off input capability rather than viewport width, so a wide tablet is
+   still treated as touch. Keyboard handlers stay active regardless, so
+   shortcuts keep working anywhere a keyboard is attached. */
+.kbd-only { display: none; }
+.touch-only { display: inline-flex; align-items: center; }
+@media (hover: hover) and (pointer: fine) {
+  .kbd-only { display: inline-flex; align-items: center; gap: 6px; }
+  .touch-only { display: none; }
+}
+
 /* Big numerals */
 .numeral {
   font-family: var(--serif);

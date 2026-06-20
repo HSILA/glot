@@ -278,8 +278,9 @@ export default function SessionPage() {
                       <CardPhonetic meta={currentMeta} size={16} />
                     </div>
                   ) : null}
-                  <div className="mt-auto pt-8 mono flex items-center gap-2" style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.08em" }}>
-                    TAP OR PRESS <kbd>SPACE</kbd>
+                  <div className="mt-auto pt-8 mono flex items-center justify-center gap-2" style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.08em" }}>
+                    <span className="touch-only">TAP TO FLIP</span>
+                    <span className="kbd-only">TAP OR PRESS <kbd>SPACE</kbd></span>
                   </div>
                 </div>
 
@@ -320,7 +321,7 @@ export default function SessionPage() {
                       >
                         <span style={{ fontSize: 14 }}>{btn.label}</span>
                         <span className="mono" style={{ fontSize: 10, opacity: 0.75, letterSpacing: "0.04em" }}>{btn.description}</span>
-                        <kbd style={{ marginTop: 4, background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.15)" }}>{btn.shortcut}</kbd>
+                        <kbd className="kbd-only" style={{ marginTop: 4, background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.15)" }}>{btn.shortcut}</kbd>
                       </button>
                     );
                   })}
@@ -330,7 +331,7 @@ export default function SessionPage() {
               <div className="flex justify-center">
                 <Button size="lg" className="px-12 gap-2" onClick={handleFlip} disabled={isSubmitting}>
                   Show answer
-                  <kbd style={{ background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.2)" }}>SPACE</kbd>
+                  <kbd className="kbd-only" style={{ background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.2)" }}>SPACE</kbd>
                 </Button>
               </div>
             ) : null}
