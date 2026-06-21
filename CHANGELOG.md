@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1](https://github.com/HSILA/glot/compare/v0.3.0...v0.3.1) (2026-06-21)
+
+
+### Bug Fixes
+
+* **deploy:** prevent migration step from consuming streamed script stdin ([#93](https://github.com/HSILA/glot/issues/93)) ([b855303](https://github.com/HSILA/glot/commit/b8553033aeace742d801771db0f741390148a646))
+* **frontend:** load custom fonts reliably ([#103](https://github.com/HSILA/glot/issues/103)) ([350c9d4](https://github.com/HSILA/glot/commit/350c9d4ad9e4d5d89814fd9866715cc7e26dbfdd)), closes [#101](https://github.com/HSILA/glot/issues/101)
+* **frontend:** recenter content when sidebar collapses ([#99](https://github.com/HSILA/glot/issues/99)) ([91f4f25](https://github.com/HSILA/glot/commit/91f4f25db7321da149e8fc576b3fbf10ba91ffa8))
+* **frontend:** simplify deck card due count layout ([#100](https://github.com/HSILA/glot/issues/100)) ([6fdb579](https://github.com/HSILA/glot/commit/6fdb5790a78055762b02dbc125efe17f575d2184))
+* **session:** adapt keyboard hints for touch devices ([#95](https://github.com/HSILA/glot/issues/95)) ([#98](https://github.com/HSILA/glot/issues/98)) ([9cada39](https://github.com/HSILA/glot/commit/9cada399d68cd7f278749f47950670c351f81fff))
+
 ## [0.3.0](https://github.com/HSILA/glot/compare/v0.2.0...v0.3.0) (2026-06-09)
 
 
