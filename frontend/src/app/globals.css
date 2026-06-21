@@ -4,7 +4,9 @@
 @custom-variant dark (&:is([data-theme="dark"] *));
 
 /* ===== Glot redesign — dark-first, bold gen-z AI startup ===== */
-@import url('https://fonts.googleapis.com/css2?family=Crimson+Pro:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Inter+Tight:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap');
+/* Fonts are loaded via next/font/google in app/layout.tsx, which exposes the
+   --font-crimson-pro / --font-inter-tight / --font-jetbrains-mono variables
+   consumed by --serif / --sans / --mono below. */
 
 /* Dark theme — default */
 :root,
@@ -31,9 +33,9 @@
   --bad: #ff7a7a;
   --info: #88c0ff;
 
-  --serif: 'Crimson Pro', 'Times New Roman', serif;
-  --sans: 'Inter Tight', system-ui, sans-serif;
-  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --serif: var(--font-crimson-pro), 'Crimson Pro', Georgia, serif;
+  --sans: var(--font-inter-tight), 'Inter Tight', system-ui, sans-serif;
+  --mono: var(--font-jetbrains-mono), 'JetBrains Mono', ui-monospace, monospace;
 
   --radius-sm: 4px;
   --radius: 8px;
