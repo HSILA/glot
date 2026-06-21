@@ -475,7 +475,7 @@ function DeckRowCard({
           onOpen();
         }
       }}
-      className="relative cursor-pointer group overflow-hidden"
+      className="relative cursor-pointer group overflow-hidden flex flex-col"
       style={{
         padding: "24px 24px 22px",
         borderRadius: 16,
@@ -506,8 +506,8 @@ function DeckRowCard({
         }}
       />
 
-      {/* Top row: language tag + due pill */}
-      <div className="flex justify-between items-start">
+      {/* Top row: language tag + card count */}
+      <div className="flex items-start">
         <span
           className="mono"
           style={{ fontSize: 10, color: "var(--muted)", letterSpacing: "0.14em" }}
@@ -517,30 +517,12 @@ function DeckRowCard({
             : "DECK"}{" "}
           · {total}
         </span>
-        {due > 0 && (
-          <div
-            className="mono"
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              padding: "3px 8px",
-              borderRadius: 999,
-              background: "var(--accent)",
-              color: "var(--accent-fg)",
-              fontSize: 11,
-              fontWeight: 600,
-            }}
-          >
-            {due} due
-          </div>
-        )}
       </div>
 
       {/* Deck name + description */}
       <div style={{ marginTop: 28 }}>
         <div
-          className="serif"
+          className="serif line-clamp-2"
           style={{
             fontSize: 26,
             fontWeight: 500,
@@ -551,6 +533,7 @@ function DeckRowCard({
           {deck.name}
         </div>
         <div
+          className="line-clamp-2"
           style={{ fontSize: 13, color: "var(--muted)", marginTop: 6, lineHeight: 1.4 }}
         >
           {deck.description || "No description"}
@@ -604,7 +587,7 @@ function DeckRowCard({
       </div>
 
       {/* Progress bar at bottom */}
-      <div style={{ position: "absolute", left: 24, right: 24, bottom: 22 }}>
+      <div style={{ marginTop: "auto", paddingTop: 16 }}>
         <div
           className="mono"
           style={{
