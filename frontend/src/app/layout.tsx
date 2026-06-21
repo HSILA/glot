@@ -1,8 +1,31 @@
 import type { Metadata, Viewport } from "next";
+import { Crimson_Pro, Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { ThemeProvider } from "@/components/providers/theme-provider";
 import { AuthProvider } from "@/components/providers/auth-provider";
 import { Toaster } from "@/components/ui/sonner";
+
+// Load custom fonts through next/font so they are self-hosted and registered
+// reliably, instead of a CSS @import that is fragile to ordering and runtime
+// loading. The generated CSS variables are wired into --serif/--sans/--mono.
+const crimsonPro = Crimson_Pro({
+  subsets: ["latin"],
+  style: ["normal", "italic"],
+  display: "swap",
+  variable: "--font-crimson-pro",
+});
+
+const interTight = Inter_Tight({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-inter-tight",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-jetbrains-mono",
+});
 
 export const metadata: Metadata = {
   title: "Glot — Remember anything, in minutes a day",
@@ -35,7 +58,14 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" suppressHydrationWarning data-theme="dark" data-accent="lime" data-density="regular">
+    <html
+      lang="en"
+      suppressHydrationWarning
+      data-theme="dark"
+      data-accent="lime"
+      data-density="regular"
+      className={`${crimsonPro.variable} ${interTight.variable} ${jetbrainsMono.variable}`}
+    >
       <head>
         <script dangerouslySetInnerHTML={{ __html: tweaksScript }} />
       </head>
