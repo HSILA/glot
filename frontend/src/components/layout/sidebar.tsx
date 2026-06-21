@@ -23,12 +23,16 @@ const NAV_ITEMS: NavItem[] = [
   { href: "/library", label: "Library", icon: "library" },
 ];
 
-export function Sidebar() {
+interface SidebarProps {
+  collapsed: boolean;
+  onToggle: () => void;
+}
+
+export function Sidebar({ collapsed, onToggle }: SidebarProps) {
   const pathname = usePathname();
-  const [collapsed, setCollapsed] = React.useState(false);
   const { user } = useAuth();
 
-  const width = collapsed ? 64 : 240;
+  const width = collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH;
 
   const initials = React.useMemo(() => {
     if (!user) return "G";
@@ -148,7 +152,7 @@ export function Sidebar() {
       <button
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-        onClick={() => setCollapsed(!collapsed)}
+        onClick={onToggle}
         style={{
           position: "fixed",
           left: width,
@@ -266,4 +270,5 @@ export function Sidebar() {
   );
 }
 
-export const SIDEBAR_DEFAULT_WIDTH = 240;
+export const SIDEBAR_EXPANDED_WIDTH = 240;
+export const SIDEBAR_COLLAPSED_WIDTH = 64;
