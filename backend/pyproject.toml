@@ -1,6 +1,6 @@
 [project]
 name = "glot-backend"
-version = "0.3.0"
+version = "0.3.1"
 description = "Glot - A personal spaced-repetition learning PWA backend"
 readme = "README.md"
 requires-python = ">=3.12"
