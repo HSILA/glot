@@ -17,6 +17,11 @@ export interface Resource {
   uploaded_at: string;
   processed_at: string | null;
   is_owner: boolean;
+  // Cronless recovery state, computed per-request by the backend.
+  // extraction_problem: extraction is interrupted/stale (show amber warning).
+  // can_resume_extraction: user can re-queue incomplete/failed work.
+  extraction_problem?: boolean;
+  can_resume_extraction?: boolean;
 }
 
 export interface ResourceListResponse {

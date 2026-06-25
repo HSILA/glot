@@ -4,9 +4,13 @@ Extraction workers for ARQ background jobs.
 Architecture:
 - prepare_extraction: Coordinator job (ensure metadata, render missing PNGs, queue page jobs)
 - extract_page: Processes a single page (atomic, retryable)
-- check_stale_extractions: Cron job to re-queue stuck pages
-- check_orphan_resources: Cron job to fix resources stuck in PROCESSING
+- check_stale_extractions: Re-queue stuck pages (run at worker startup)
+- check_orphan_resources: Fix resources stuck in PROCESSING (run at worker startup)
 - recover_incomplete_extractions: Startup recovery for incomplete processing resources
+
+Recovery is cronless: there is no periodic DB polling. Recovery runs once at
+worker startup, and otherwise on-demand when the frontend resumes a resource
+(see resources API). Deterministic ARQ job ids dedupe re-queued work.
 
 Run with:
     arq app.workers.extraction_worker.WorkerSettings
@@ -16,7 +20,6 @@ import io
 from datetime import timedelta
 
 import fitz  # PyMuPDF
-from arq.cron import cron
 from loguru import logger
 from PIL import Image
 from sqlalchemy import func, select
@@ -28,6 +31,16 @@ from app.db import async_session_factory
 from app.models import PageExtraction, PageStatus, Resource
 from app.models.resource import ExtractionStatus
 from app.services import RedisService, StorageService
+
+
+def _prepare_job_id(resource_id: int) -> str:
+    """Deterministic ARQ job id for a resource's prepare job (dedupe signal)."""
+    return f"glot:prepare:{resource_id}"
+
+
+def _extract_page_job_id(resource_id: int, page_number: int) -> str:
+    """Deterministic ARQ job id for a single page job (dedupe signal)."""
+    return f"glot:extract:{resource_id}:{page_number}"
 
 
 async def _render_page_to_temp(
@@ -264,6 +277,7 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
                     "extract_page",
                     resource_id,
                     page.page_number,
+                    _job_id=_extract_page_job_id(resource_id, page.page_number),
                 )
                 if job_id:
                     queued += 1
@@ -500,7 +514,7 @@ async def _update_resource_progress(
 
 async def check_stale_extractions(ctx: dict):
     """
-    Cron job: Find stuck extractions and re-queue them.
+    Recovery helper: find stuck extractions and re-queue them.
 
     A page is considered stuck if:
     - Status is PROCESSING
@@ -535,6 +549,7 @@ async def check_stale_extractions(ctx: dict):
                     "extract_page",
                     page.resource_id,
                     page.page_number,
+                    _job_id=_extract_page_job_id(page.resource_id, page.page_number),
                 )
                 if job_id:
                     requeued += 1
@@ -554,7 +569,7 @@ async def check_stale_extractions(ctx: dict):
 
 async def check_orphan_resources(ctx: dict):
     """
-    Cron job: Fix resources stuck in PROCESSING when all pages are done.
+    Recovery helper: fix resources stuck in PROCESSING when all pages are done.
 
     This can happen if a worker crashes between updating page statuses
     and updating the parent resource status.
@@ -674,6 +689,7 @@ async def recover_incomplete_extractions(ctx: dict):
                 job_id = await redis.enqueue_job(
                     "prepare_extraction",
                     resource.id,
+                    _job_id=_prepare_job_id(resource.id),
                 )
                 if job_id:
                     recovered += 1
@@ -739,13 +755,13 @@ class WorkerSettings:
     functions = [prepare_extraction, extract_page]
     on_startup = on_worker_startup
     on_shutdown = on_worker_shutdown
-    cron_jobs = [
-        cron(check_stale_extractions, minute={0, 15, 30, 45}),
-        cron(check_orphan_resources, minute={5, 20, 35, 50}),
-    ]
+    # No cron_jobs: recovery is cronless (runs at startup + on-demand resume).
+    # This avoids periodic DB polling while the queue is idle.
     redis_settings = _get_worker_redis_settings()
     queue_name = "glot:extraction_queue"
     max_jobs = 4
+    # Per-job retry/timeout bounds. Jobs are idempotent, so retries are safe.
+    max_tries = 3
     job_timeout = 1200
     keep_result = 0
     health_check_interval = 600

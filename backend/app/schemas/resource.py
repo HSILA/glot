@@ -58,6 +58,19 @@ class ResourceRead(BaseModel):
     processed_at: datetime | None
     is_owner: bool = Field(..., description="Whether current user is the uploader")
 
+    # Cronless recovery state (computed per-request, not stored).
+    extraction_problem: bool = Field(
+        default=False,
+        description=(
+            "True when extraction is incomplete/stale with no active progress "
+            "signal (e.g. interrupted by a worker restart). UI shows an amber warning."
+        ),
+    )
+    can_resume_extraction: bool = Field(
+        default=False,
+        description="True when the user can re-queue incomplete/failed extraction work.",
+    )
+
     model_config = {"from_attributes": True}
 
 

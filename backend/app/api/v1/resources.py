@@ -14,6 +14,7 @@ Endpoints:
     GET    /resources/{id}/progress  - Get extraction progress
 """
 
+from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -34,9 +35,95 @@ from app.schemas.resource import (
     UploadRequest,
     UploadResponse,
 )
-from app.services import StorageService
+from app.services import RedisService, StorageService
 
 router = APIRouter()
+
+# Statuses that can have an in-flight extraction worth probing Redis for.
+_ACTIVE_EXTRACTION_STATUSES = (
+    ExtractionStatus.PENDING,
+    ExtractionStatus.PROCESSING,
+)
+
+
+# A progress signal older than the worker timeout is no longer evidence of
+# active work. Keep a small buffer over WorkerSettings.job_timeout (20 min).
+_ACTIVE_PROGRESS_MAX_AGE = timedelta(minutes=25)
+
+
+def _has_recent_progress_signal(progress: dict | None) -> bool:
+    """Return True when Redis progress is recent enough to count as active."""
+    if not progress:
+        return False
+
+    updated_at = progress.get("updated_at")
+    if not updated_at:
+        return False
+
+    try:
+        updated = datetime.fromisoformat(str(updated_at))
+    except ValueError:
+        return False
+
+    if updated.tzinfo is None:
+        updated = updated.replace(tzinfo=UTC)
+
+    return datetime.now(UTC) - updated <= _ACTIVE_PROGRESS_MAX_AGE
+
+
+def _recovery_flags(
+    status: ExtractionStatus,
+    progress: dict | None,
+) -> tuple[bool, bool]:
+    """Compute (extraction_problem, can_resume_extraction) for one resource.
+
+    DB status is the source of truth; ``progress`` is only a Redis liveness
+    signal. Missing or stale progress means there is no active signal:
+    - FAILED: a problem the user can retry.
+    - PENDING/PROCESSING without a recent progress signal: interrupted/stale
+      and resumable (the worker likely restarted; there is no cron to recover it).
+    - PENDING/PROCESSING with a recent progress signal: actively running, no problem.
+    - NONE/COMPLETED: nothing to recover.
+    """
+    if status == ExtractionStatus.FAILED:
+        return True, True
+    if status in _ACTIVE_EXTRACTION_STATUSES:
+        if not _has_recent_progress_signal(progress):
+            return True, True
+        return False, False
+    return False, False
+
+
+async def _attach_recovery_state(items: list[tuple[ResourceRead, Resource]]) -> None:
+    """Populate recovery flags for resources already in this request scope.
+
+    Only the resources being returned are evaluated (no global DB/queue scan).
+    Redis is consulted purely as a progress/liveness signal, never as truth.
+    """
+    needs_redis = any(
+        res.extraction_status in _ACTIVE_EXTRACTION_STATUSES for _, res in items
+    )
+
+    redis: RedisService | None = None
+    try:
+        if needs_redis:
+            redis = RedisService(get_settings().redis_url)
+            await redis.connect()
+
+        for read, res in items:
+            progress: dict | None = None
+            if redis is not None and res.extraction_status in _ACTIVE_EXTRACTION_STATUSES:
+                try:
+                    progress = await redis.get_progress(res.id)
+                except Exception:
+                    progress = None
+            read.extraction_problem, read.can_resume_extraction = _recovery_flags(
+                res.extraction_status,
+                progress,
+            )
+    finally:
+        if redis is not None:
+            await redis.close()
 
 
 def _build_resource_read(
@@ -285,10 +372,12 @@ async def list_my_resources(
     result = await session.execute(query)
     rows = result.all()
 
-    items = [
-        _build_resource_read(resource, user_resource, current_user.id)
+    reads_with_resources = [
+        (_build_resource_read(resource, user_resource, current_user.id), resource)
         for resource, user_resource in rows
     ]
+    await _attach_recovery_state(reads_with_resources)
+    items = [read for read, _ in reads_with_resources]
 
     return ResourceListResponse(items=items, total=total, limit=limit, offset=offset)
 
@@ -387,7 +476,7 @@ async def get_resource(
         )
 
     name = user_resource.name if user_resource else resource.file_name
-    return ResourceRead(
+    read = ResourceRead(
         id=resource.id,
         content_hash=resource.content_hash,
         name=name,
@@ -399,6 +488,12 @@ async def get_resource(
         processed_at=resource.processed_at,
         is_owner=resource.uploaded_by == current_user.id,
     )
+
+    # Only library resources can be resumed by this user; skip recovery probe otherwise.
+    if user_resource is not None:
+        await _attach_recovery_state([(read, resource)])
+
+    return read
 
 
 @router.post("/{resource_id}/add", response_model=ResourceRead, status_code=201)
@@ -685,8 +780,6 @@ async def get_extraction_progress(
         ExtractionStatus.PROCESSING,
     ]:
         try:
-            from app.services import RedisService
-
             redis = RedisService(get_settings().redis_url)
             await redis.connect()
             progress_data = await redis.get_progress(resource_id)
@@ -725,8 +818,13 @@ async def trigger_extraction(
 
     This is idempotent - calling multiple times will:
     - For new extraction: render pages and queue all page jobs
-    - For incomplete: queue only incomplete pages
+    - For incomplete/interrupted (Resume): queue only incomplete pages
     - For completed: return error (already done)
+
+    This same endpoint backs the frontend "Resume" action for interrupted or
+    failed extractions: it re-queues only incomplete work via the idempotent
+    prepare_extraction job. A deterministic ARQ job id dedupes concurrent
+    triggers so a double click cannot double-queue.
 
     Returns 202 Accepted - extraction runs in background.
     """
@@ -767,12 +865,24 @@ async def trigger_extraction(
 
     await session.commit()
 
-    # Enqueue prepare_extraction job (handles rendering + page job queueing)
-    from app.services import RedisService
-
+    # Enqueue prepare_extraction job (handles rendering + page job queueing).
+    # Deterministic job id dedupes concurrent Extract/Resume triggers.
     settings = get_settings()
     redis = RedisService(settings.redis_url)
-    job_id = await redis.enqueue_job("prepare_extraction", resource_id)
+    job_id = await redis.enqueue_job(
+        "prepare_extraction",
+        resource_id,
+        _job_id=f"glot:prepare:{resource_id}",
+    )
+    # Mark this resource as intentionally queued so a quick refresh does not
+    # look interrupted before the worker has written its first progress update.
+    await redis.set_progress(
+        resource_id,
+        status="pending",
+        progress=0,
+        current_page=None,
+        total_pages=resource.page_count,
+    )
     await redis.close()
 
     return {

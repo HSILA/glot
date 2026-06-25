@@ -132,19 +132,23 @@ export function ResourceDetailModal({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // Interrupted/stale extraction (or hard failure): backend asks us to offer Resume.
+  const isInterrupted =
+    resource.extraction_problem === true || resource.extraction_status === "failed";
+
   const getExtractionStatus = () => {
     const status = resource.extraction_status;
     const progressValue =
       extractionProgress ?? (status === "pending" ? 0 : undefined);
 
-    // Check for paused state
-    if (status === "failed") {
+    // Interrupted/stale/failed extraction shows an amber warning + Resume.
+    if (isInterrupted) {
       return {
         icon: PauseCircle,
         color: "text-amber-500",
         bgColor: "bg-amber-50 dark:bg-amber-950/20",
         borderColor: "border-amber-200 dark:border-amber-800",
-        label: "Paused",
+        label: "Interrupted",
         canExtract: true,
       };
     }
@@ -312,7 +316,7 @@ export function ResourceDetailModal({
                   onClick={handleExtract}
                 >
                   <Sparkles className="h-4 w-4 mr-2" />
-                  {resource.extraction_status === "failed" ? "Resume" : "Extract"}
+                  {isInterrupted ? "Resume" : "Extract"}
                 </Button>
               )}
 
