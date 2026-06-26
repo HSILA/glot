@@ -96,6 +96,28 @@ describe("resourcesApi.getMyResources", () => {
       "Failed to fetch resources",
     );
   });
+
+  test("surfaces per-resource recovery flags", async () => {
+    fetchMock.enqueue(() =>
+      jsonResponse({
+        items: [
+          makeResource({
+            extraction_status: "processing",
+            extraction_problem: true,
+            can_resume_extraction: true,
+          }),
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      }),
+    );
+
+    const r = await resourcesApi.getMyResources();
+
+    expect(r.items[0].extraction_problem).toBe(true);
+    expect(r.items[0].can_resume_extraction).toBe(true);
+  });
 });
 
 describe("resourcesApi.getPublicResources", () => {

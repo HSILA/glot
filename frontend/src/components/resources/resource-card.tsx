@@ -89,23 +89,32 @@ export function ResourceCard({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // Interrupted/stale extraction (or hard failure): backend asks us to offer Resume.
+  const isInterrupted =
+    resource.extraction_problem === true || resource.extraction_status === "failed";
+
   const canExtract =
     isMyLibrary &&
-    (resource.extraction_status === "none" || resource.extraction_status === "failed");
-  
-  const isFailed = resource.extraction_status === "failed";
-  const isExtracting = resource.extraction_status === "pending" || resource.extraction_status === "processing";
+    (resource.extraction_status === "none" ||
+      isInterrupted ||
+      resource.can_resume_extraction === true);
+
+  // Only spin/show progress for live extractions, not interrupted ones.
+  const isExtracting =
+    !isInterrupted &&
+    (resource.extraction_status === "pending" ||
+      resource.extraction_status === "processing");
   const progressValue = extractionProgress ?? (resource.extraction_status === "pending" ? 0 : undefined);
 
   // Status indicator config
   const getStatusConfig = () => {
-    // Check for paused state first (failed or stalled processing)
-    if (resource.extraction_status === "failed") {
+    // Interrupted/stale/failed extraction shows an amber warning + Resume.
+    if (isInterrupted) {
       return {
         icon: PauseCircle,
         color: "text-amber-500",
         borderColor: "hover:border-amber-500/50",
-        label: "Paused",
+        label: "Interrupted",
       };
     }
 
@@ -197,7 +206,7 @@ export function ResourceCard({
                 <div className="flex gap-2">
                   {isMyLibrary && canExtract && (
                     <Button
-                      variant={isFailed ? "destructive" : "outline"}
+                      variant="outline"
                       size="sm"
                       className="cursor-pointer transition-all hover:scale-105 hover:shadow-lg hover:shadow-primary/50 hover:brightness-110"
                       onClick={(e) => {
@@ -206,7 +215,7 @@ export function ResourceCard({
                       }}
                     >
                       <Sparkles className="h-3.5 w-3.5 mr-1" />
-                      {isFailed ? "Resume" : "Extract"}
+                      {isInterrupted ? "Resume" : "Extract"}
                     </Button>
                   )}
                   {!isMyLibrary && (

@@ -7,6 +7,7 @@ Provides a unified interface for Redis operations including:
 - General caching
 """
 
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
 
@@ -160,6 +161,7 @@ class RedisService:
             mapping["error"] = error
 
         if mapping:
+            mapping["updated_at"] = datetime.now(UTC).isoformat()
             await pool.hset(key, mapping=mapping)
             await pool.expire(key, expire_seconds)
 
@@ -187,6 +189,7 @@ class RedisService:
             "current_page": int(data.get(b"current_page", 0)) or None,
             "total_pages": int(data.get(b"total_pages", 0)) or None,
             "error": data.get(b"error", b"").decode() or None,
+            "updated_at": data.get(b"updated_at", b"").decode() or None,
         }
 
     async def clear_progress(self, resource_id: int) -> None:
