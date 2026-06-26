@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.2](https://github.com/HSILA/glot/compare/v0.3.1...v0.3.2) (2026-06-26)
+
+
+### Bug Fixes
+
+* **extraction:** remove idle recovery polling ([#105](https://github.com/HSILA/glot/issues/105)) ([1f7bdf4](https://github.com/HSILA/glot/commit/1f7bdf4c911d73d3cb1b1ed88072b23fc35c0ec4))
+
 ## [0.3.1](https://github.com/HSILA/glot/compare/v0.3.0...v0.3.1) (2026-06-21)
 
 
