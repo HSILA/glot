@@ -43,14 +43,16 @@ app/
 
 ## Configuration
 
-### Global Settings (Environment Variables)
+### Global Scheduling Policy
 
-Set in `.env` or environment. Apply to all users.
+The canonical global policy is version-controlled in
+`config/scheduling.yaml`. It is validated at startup and has no environment
+overrides or Python fallback defaults.
 
-| Setting | Default | Env Variable |
-|---------|---------|--------------|
-| `maximum_interval_days` | 365 | `MAXIMUM_INTERVAL_DAYS` |
-| `enable_fuzz` | true | `ENABLE_FUZZ` |
+| Setting | Value |
+|---------|-------|
+| `maximum_interval_days` | 90 |
+| `enable_fuzz` | true |
 
 ### Per-User Settings (Database)
 

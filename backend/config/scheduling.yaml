@@ -1,0 +1,27 @@
+# Canonical global scheduling policy for Glot.
+#
+# This file is the single source of truth for scheduling values that apply to
+# every user. It is version-controlled and shipped inside the backend image, and
+# it is parsed and validated at startup by app/core/scheduling.py.
+#
+# There are no environment overrides and no fallback defaults in Python: if this
+# file is missing, malformed, or incomplete, the backend refuses to start. That
+# is deliberate. A silent fallback would persist wrong `next_review_at` values
+# into the database, and those stay wrong after the config is fixed.
+#
+# Per-user settings (desired_retention, FSRS weights) are NOT here — they live in
+# the user_settings table.
+#
+# Changing maximum_interval_days affects intervals computed from the next review
+# onward. It does not reschedule existing cards.
+
+# Schema version of this file. Bump only alongside a schema change in
+# app/core/scheduling.py; the loader rejects versions it does not understand.
+version: 1
+
+scheduling:
+  # Hard cap, in days, on the interval FSRS may assign to a card (>= 1).
+  maximum_interval_days: 90
+
+  # Add randomness to intervals to prevent review clumping.
+  enable_fuzz: true

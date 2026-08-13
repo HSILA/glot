@@ -25,14 +25,16 @@ The scheduling service calculates optimal review intervals using the FSRS (Free 
 
 ## Configuration
 
-### Global Settings (Environment Variables)
+### Global Scheduling Policy
 
-Defined in `app/core/__init__.py`, loaded from environment.
+Defined in the version-controlled `config/scheduling.yaml` and validated with
+Pydantic at startup. There are no environment overrides or Python fallback
+defaults.
 
-| Setting | Default | Description |
-|---------|---------|-------------|
-| `maximum_interval_days` | 365 | Max days between reviews |
-| `enable_fuzz` | True | Add randomness to intervals |
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `maximum_interval_days` | 90 | Max days between reviews |
+| `enable_fuzz` | true | Add randomness to intervals |
 
 ### Per-User Settings (Database)
 

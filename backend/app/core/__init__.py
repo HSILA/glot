@@ -35,9 +35,8 @@ class Settings(BaseSettings):
     database_pool_timeout: float = 30.0
     database_use_null_pool: bool = False
 
-    # Scheduling (global defaults)
-    maximum_interval_days: int = 365
-    enable_fuzz: bool = True
+    # Scheduling policy is NOT here: it lives in config/scheduling.yaml
+    # (see app.core.scheduling) so there is one canonical source of truth.
 
     # Authentication
     jwt_secret: str

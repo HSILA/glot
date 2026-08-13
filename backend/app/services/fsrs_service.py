@@ -41,18 +41,23 @@ class FSRSService:
 
     def __init__(
         self,
+        *,
+        maximum_interval_days: int,
+        enable_fuzz: bool,
         desired_retention: float = 0.9,
-        maximum_interval_days: int = 365,
-        enable_fuzz: bool = True,
         weights: list[float] | None = None,
     ):
         """
         Initialize scheduling service with configuration.
 
+        The global policy values are required and have no defaults here: they
+        come from config/scheduling.yaml (see app.core.scheduling). Forgetting to
+        pass them is a TypeError rather than a silently wrong schedule.
+
         Args:
+            maximum_interval_days: Maximum days between reviews (global policy)
+            enable_fuzz: Add randomness to prevent review clumping (global policy)
             desired_retention: Target recall probability (per-user setting)
-            maximum_interval_days: Maximum days between reviews (global config)
-            enable_fuzz: Add randomness to prevent review clumping (global config)
             weights: Algorithm parameters (per-user, None = use library defaults)
         """
         self.desired_retention = desired_retention
@@ -193,18 +198,3 @@ class FSRSService:
         card.updated_at = now
 
         return card, scheduled_days, elapsed_days
-
-
-def get_fsrs_service(
-    desired_retention: float = 0.9,
-    maximum_interval_days: int = 365,
-    enable_fuzz: bool = True,
-    weights: list[float] | None = None,
-) -> FSRSService:
-    """Factory function to create scheduling service with settings."""
-    return FSRSService(
-        desired_retention=desired_retention,
-        maximum_interval_days=maximum_interval_days,
-        enable_fuzz=enable_fuzz,
-        weights=weights,
-    )

@@ -16,7 +16,7 @@ def make_card(**overrides) -> Card:
 
 
 def test_again_keeps_card_due_immediately_today():
-    service = FSRSService()
+    service = FSRSService(maximum_interval_days=90, enable_fuzz=False)
     card = make_card(state=CardState.REVIEW, stability=2.0, difficulty=5.0, reps=3)
 
     before = datetime.now(UTC)
@@ -32,7 +32,7 @@ def test_again_keeps_card_due_immediately_today():
 
 
 def test_passing_rating_keeps_day_based_schedule():
-    service = FSRSService()
+    service = FSRSService(maximum_interval_days=90, enable_fuzz=False)
     card = make_card(state=CardState.REVIEW, stability=2.0, difficulty=5.0, reps=3)
 
     updated, _scheduled_days, _elapsed_days = service.apply_review(card, rating=3)
@@ -44,7 +44,7 @@ def test_passing_rating_keeps_day_based_schedule():
 
 
 def test_passing_after_again_graduates_out_of_immediate_retry():
-    service = FSRSService()
+    service = FSRSService(maximum_interval_days=90, enable_fuzz=False)
     card = make_card(state=CardState.REVIEW, stability=2.0, difficulty=5.0, reps=3)
 
     updated, _scheduled_days, _elapsed_days = service.apply_review(card, rating=1)

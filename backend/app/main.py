@@ -20,6 +20,7 @@ from slowapi.util import get_remote_address
 from app.api import v1_router
 from app.core import get_settings
 from app.core.logging import configure_logging
+from app.core.scheduling import get_scheduling_policy
 from app.db import close_db, init_db
 
 settings = get_settings()
@@ -45,6 +46,12 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting Glot API...")
     logger.info(f"Debug mode: {settings.debug}")
+    scheduling_policy = get_scheduling_policy()
+    logger.info(
+        "Scheduling policy loaded: maximum_interval_days={}, enable_fuzz={}",
+        scheduling_policy.maximum_interval_days,
+        scheduling_policy.enable_fuzz,
+    )
     logger.info("Checking database connectivity...")
     await init_db()
     logger.success("Database connectivity verified")

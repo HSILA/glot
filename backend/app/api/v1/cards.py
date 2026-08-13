@@ -21,7 +21,7 @@ from sqlalchemy import case, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.core import get_settings
+from app.core.scheduling import get_scheduling_policy
 from app.dependencies import (
     get_async_session,
     get_current_user,
@@ -79,13 +79,13 @@ async def get_fsrs_service_from_db(
     - FastAPI caches dependencies per-request, so user resolution is shared
       within the same request context.
     """
-    config = get_settings()
+    policy = get_scheduling_policy()
     settings = await get_user_settings(session, current_user)
 
     return FSRSService(
         desired_retention=settings.desired_retention,
-        maximum_interval_days=config.maximum_interval_days,  # Global
-        enable_fuzz=config.enable_fuzz,  # Global
+        maximum_interval_days=policy.maximum_interval_days,  # Global policy
+        enable_fuzz=policy.enable_fuzz,  # Global policy
         weights=settings.weights,
     )
 
