@@ -23,7 +23,7 @@ from typing import Annotated, NoReturn
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from PIL import Image
-from sqlalchemy import func
+from sqlalchemy import delete, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -57,6 +57,7 @@ _ACTIVE_EXTRACTION_STATUSES = (
 # A progress signal older than the worker timeout is no longer evidence of
 # active work. Keep a small buffer over WorkerSettings.job_timeout (20 min).
 _ACTIVE_PROGRESS_MAX_AGE = timedelta(minutes=25)
+UPLOAD_URL_EXPIRES_SECONDS = 900
 
 
 def _has_recent_progress_signal(progress: dict | None) -> bool:
@@ -159,6 +160,15 @@ def _is_publicly_available(resource: Resource) -> bool:
     return resource.is_public and resource.upload_confirmed
 
 
+def _upload_reservation_expired(resource: Resource) -> bool:
+    uploaded_at = resource.uploaded_at
+    if uploaded_at.tzinfo is None:
+        uploaded_at = uploaded_at.replace(tzinfo=UTC)
+    return datetime.now(UTC) - uploaded_at >= timedelta(
+        seconds=UPLOAD_URL_EXPIRES_SECONDS
+    )
+
+
 async def _enforce_resource_capacity(
     session: AsyncSession,
     user_id: int | None,
@@ -213,7 +223,9 @@ async def request_upload(
 
     # Check if content already exists (deduplication)
     existing = await session.execute(
-        select(Resource).where(Resource.content_hash == request.content_hash)
+        select(Resource)
+        .where(Resource.content_hash == request.content_hash)
+        .with_for_update()
     )
     existing_resource = existing.scalar_one_or_none()
 
@@ -227,22 +239,60 @@ async def request_upload(
         user_resource = user_has_it.scalar_one_or_none()
 
         if not existing_resource.upload_confirmed:
+            reservation_taken_over = False
             if existing_resource.uploaded_by != current_user.id:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail="This upload is still being validated",
+                if not _upload_reservation_expired(existing_resource):
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail="This upload is still being validated",
+                    )
+
+                await _enforce_resource_capacity(
+                    session,
+                    current_user.id,
+                    resources_config.max_files_per_user,
                 )
+                await session.execute(
+                    delete(UserResource).where(
+                        UserResource.resource_id == existing_resource.id
+                    )
+                )
+                try:
+                    await storage.async_delete_file(
+                        existing_resource.content_hash,
+                        folder="raw",
+                    )
+                except Exception as exc:
+                    logging.warning(
+                        "Failed to delete expired upload reservation %s: %s",
+                        existing_resource.content_hash,
+                        exc,
+                    )
+
+                existing_resource.uploaded_by = current_user.id
+                existing_resource.size_bytes = request.size_bytes
+                existing_resource.file_name = request.file_name
+                existing_resource.is_public = request.is_public
+                existing_resource.uploaded_at = datetime.now(UTC)
+                existing_resource.page_count = None
+                existing_resource.upload_confirmed = False
+                existing_resource.extraction_status = ExtractionStatus.NONE
+                existing_resource.processed_at = None
+                user_resource = None
+                reservation_taken_over = True
+
             if existing_resource.size_bytes != request.size_bytes:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
                     detail="Pending upload metadata does not match this file",
                 )
             if user_resource is None:
-                await _enforce_resource_capacity(
-                    session,
-                    current_user.id,
-                    resources_config.max_files_per_user,
-                )
+                if not reservation_taken_over:
+                    await _enforce_resource_capacity(
+                        session,
+                        current_user.id,
+                        resources_config.max_files_per_user,
+                    )
                 user_resource = UserResource(
                     user_id=current_user.id,
                     resource_id=existing_resource.id,
@@ -258,7 +308,7 @@ async def request_upload(
             return UploadResponse(
                 upload_url=upload_url,
                 resource_id=existing_resource.id,
-                expires_in=900,
+                expires_in=UPLOAD_URL_EXPIRES_SECONDS,
             )
 
         if user_resource is not None:
@@ -333,7 +383,7 @@ async def request_upload(
     return UploadResponse(
         upload_url=upload_url,
         resource_id=resource.id,
-        expires_in=900,
+        expires_in=UPLOAD_URL_EXPIRES_SECONDS,
     )
 
 

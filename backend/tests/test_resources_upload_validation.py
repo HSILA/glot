@@ -1,4 +1,5 @@
 import hashlib
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
 import fitz
@@ -181,6 +182,61 @@ async def test_other_user_cannot_link_an_unconfirmed_upload():
     assert exc.value.status_code == 409
     session.add.assert_not_called()
     storage.generate_upload_url.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_other_user_can_take_over_expired_upload_reservation():
+    request = make_upload_request()
+    pending = Resource(
+        id=1,
+        content_hash=request.content_hash,
+        size_bytes=request.size_bytes,
+        page_count=None,
+        upload_confirmed=False,
+        file_name=request.file_name,
+        is_public=True,
+        uploaded_by=1,
+        uploaded_at=datetime.now(UTC) - timedelta(seconds=901),
+    )
+    no_link = Mock()
+    no_link.scalar_one_or_none.return_value = None
+    existing_result = Mock()
+    existing_result.scalar_one_or_none.return_value = pending
+    count_result = Mock()
+    count_result.scalar.return_value = 0
+    delete_result = Mock()
+    session = AsyncMock()
+    session.execute.side_effect = [
+        existing_result,
+        no_link,
+        count_result,
+        delete_result,
+    ]
+    session.add = Mock()
+    session.flush = AsyncMock()
+    storage = Mock()
+    storage.async_delete_file = AsyncMock()
+    storage.generate_upload_url.return_value = "https://upload.example"
+
+    response = await request_upload(
+        request=request,
+        session=session,
+        current_user=User(id=2, email="other@example.com", password_hash="hash"),
+        storage=storage,
+    )
+
+    assert response.resource_id == 1
+    assert response.upload_url == "https://upload.example"
+    assert pending.uploaded_by == 2
+    assert pending.is_public is request.is_public
+    assert pending.upload_confirmed is False
+    storage.async_delete_file.assert_awaited_once_with(
+        request.content_hash,
+        folder="raw",
+    )
+    added_link = session.add.call_args.args[0]
+    assert isinstance(added_link, UserResource)
+    assert added_link.user_id == 2
 
 
 @pytest.mark.asyncio
