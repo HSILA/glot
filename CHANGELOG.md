@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.4](https://github.com/HSILA/glot/compare/v0.3.3...v0.3.4) (2026-08-20)
+
+
+### Bug Fixes
+
+* **backend:** cascade card deletion to review logs ([#115](https://github.com/HSILA/glot/issues/115)) ([69757fd](https://github.com/HSILA/glot/commit/69757fde157327d39dece1fc56e7137e08d4ef4b))
+
+
+### Code Refactoring
+
+* **backend:** centralize application policy ([#111](https://github.com/HSILA/glot/issues/111)) ([1740375](https://github.com/HSILA/glot/commit/1740375aae299b5083f84948cd0d0a8e7ebd1a74))
+
 ## [0.3.3](https://github.com/HSILA/glot/compare/v0.3.2...v0.3.3) (2026-06-26)
 
 
