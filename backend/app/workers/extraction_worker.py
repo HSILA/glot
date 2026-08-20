@@ -168,6 +168,10 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
                 logger.error(f"Resource {resource_id} not found")
                 return {"success": False, "error": "Resource not found"}
 
+            if not resource.upload_confirmed:
+                logger.error(f"Resource {resource_id} upload is not confirmed")
+                return {"success": False, "error": "Upload not confirmed"}
+
             resource.extraction_status = ExtractionStatus.PROCESSING
             await session.flush()
 

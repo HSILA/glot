@@ -18,6 +18,10 @@ from botocore.config import Config
 from app.core import Settings
 
 
+class StorageObjectTooLargeError(ValueError):
+    """Raised before an object larger than the allowed bound is materialized."""
+
+
 class StorageService:
     """
     Cloudflare R2 storage operations.
@@ -174,6 +178,43 @@ class StorageService:
         response = self._client.get_object(Bucket=self._bucket_name, Key=key)
         return response["Body"].read()
 
+    def download_file_bounded(
+        self,
+        key_or_hash: str,
+        max_bytes: int,
+        folder: str | None = "raw",
+    ) -> bytes:
+        """Download at most ``max_bytes`` and reject oversized objects early."""
+        if max_bytes < 0:
+            raise ValueError("max_bytes must be non-negative")
+
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{key_or_hash}.webp"
+        else:
+            key = f"{folder}/{key_or_hash}"
+
+        response = self._client.get_object(Bucket=self._bucket_name, Key=key)
+        body = response["Body"]
+        try:
+            content_length = response.get("ContentLength")
+            if content_length is not None and int(content_length) > max_bytes:
+                raise StorageObjectTooLargeError(
+                    f"Object is {content_length} bytes; limit is {max_bytes}"
+                )
+
+            payload = body.read(max_bytes + 1)
+            if len(payload) > max_bytes:
+                raise StorageObjectTooLargeError(
+                    f"Object exceeds the {max_bytes}-byte limit"
+                )
+            return payload
+        finally:
+            body.close()
+
     def delete_file(self, key_or_hash: str, folder: str | None = "raw") -> None:
         """
         Delete a file from R2.
@@ -301,6 +342,19 @@ class StorageService:
         folder: str | None = "raw",
     ) -> bytes:
         return await asyncio.to_thread(self.download_file, key_or_hash, folder)
+
+    async def async_download_file_bounded(
+        self,
+        key_or_hash: str,
+        max_bytes: int,
+        folder: str | None = "raw",
+    ) -> bytes:
+        return await asyncio.to_thread(
+            self.download_file_bounded,
+            key_or_hash,
+            max_bytes,
+            folder,
+        )
 
     async def async_delete_file(
         self,

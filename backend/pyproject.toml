@@ -45,6 +45,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"config/app.yaml" = "app/config/app.yaml"
+
 [tool.ruff]
 line-length = 88
 target-version = "py312"

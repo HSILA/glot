@@ -66,24 +66,28 @@ start_step "[2/9] Pulling images tag=$GLOT_VERSION"
 docker compose -f "$COMPOSE_FILE" pull
 finish_step
 
-start_step "[3/9] Stopping and removing old containers"
+start_step "[3/10] Validating backend configuration"
+docker compose -f "$COMPOSE_FILE" run -T --rm backend /app/.venv/bin/python -m app.core.app_config < /dev/null
+finish_step
+
+start_step "[4/10] Stopping and removing old containers"
 docker compose -f "$COMPOSE_FILE" down --remove-orphans
 finish_step
 
-start_step "[4/9] Running database migrations"
+start_step "[5/10] Running database migrations"
 # This script is streamed to the remote shell as stdin
 # (`bash < scripts/deploy.sh`). `docker compose run` can still attach to stdin
 # even with `-T`, and then consume the rest of this script before bash can read
 # the service startup and health-check steps. Redirect stdin from /dev/null for
 # every one-off compose container so migrations cannot drain the deploy script.
-docker compose -f "$COMPOSE_FILE" run -T --rm backend uv run alembic upgrade head < /dev/null
+docker compose -f "$COMPOSE_FILE" run -T --rm backend /app/.venv/bin/alembic upgrade head < /dev/null
 finish_step
 
-start_step "[5/9] Starting services"
+start_step "[6/10] Starting services"
 docker compose -f "$COMPOSE_FILE" up -d --remove-orphans
 finish_step
 
-start_step "[6/9] Health check backend"
+start_step "[7/10] Health check backend"
 HEALTH_OK=false
 for i in $(seq 1 30); do
   if curl -sf http://127.0.0.1:8000/docs > /dev/null 2>&1; then
@@ -108,7 +112,7 @@ if [ "$HEALTH_OK" = "false" ]; then
 fi
 finish_step
 
-start_step "[7/9] Health check frontend"
+start_step "[8/10] Health check frontend"
 FRONTEND_OK=false
 for i in $(seq 1 15); do
   if curl -sf http://127.0.0.1:3000 > /dev/null 2>&1; then
@@ -131,7 +135,7 @@ if [ "$FRONTEND_OK" = "false" ]; then
 fi
 finish_step
 
-start_step "[8/9] Health check worker"
+start_step "[9/10] Health check worker"
 if ! docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -q '^worker$'; then
   log "  ✗ Worker not running"
   docker compose -f "$COMPOSE_FILE" logs --tail=50 worker || true
@@ -141,7 +145,7 @@ fi
 log "  ✓ Worker is running"
 finish_step
 
-start_step "[9/9] Cleaning old images and build cache"
+start_step "[10/10] Cleaning old images and build cache"
 docker image prune -a -f
 docker builder prune -f
 finish_step

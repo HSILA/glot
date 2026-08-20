@@ -24,6 +24,31 @@ async def test_async_download_file_uses_to_thread(monkeypatch: pytest.MonkeyPatc
 
 
 @pytest.mark.asyncio
+async def test_async_bounded_download_uses_to_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = StorageService.__new__(StorageService)
+    called = {}
+
+    async def fake_to_thread(func, *args):
+        called["func"] = func
+        called["args"] = args
+        return b"pdf-bytes"
+
+    monkeypatch.setattr("app.services.storage_service.asyncio.to_thread", fake_to_thread)
+
+    result = await service.async_download_file_bounded(
+        "abc123",
+        folder="raw",
+        max_bytes=123,
+    )
+
+    assert result == b"pdf-bytes"
+    assert called["func"] == service.download_file_bounded
+    assert called["args"] == ("abc123", 123, "raw")
+
+
+@pytest.mark.asyncio
 async def test_async_file_exists_uses_to_thread(monkeypatch: pytest.MonkeyPatch) -> None:
     service = StorageService.__new__(StorageService)
 

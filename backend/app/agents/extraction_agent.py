@@ -7,11 +7,9 @@ This avoids the code parsing issues that occur with CodeAgent.
 
 import base64
 from dataclasses import dataclass
-from io import BytesIO
 
 from loguru import logger
 from openai import OpenAI
-from PIL import Image
 
 
 @dataclass
@@ -46,7 +44,7 @@ class ExtractionAgent:
 
     RULES:
     - Extract every word exactly as shown, preserving the original language
-    - Use # for titles, ## for sections, ### for subsections  
+    - Use # for titles, ## for sections, ### for subsections
     - Use - for bullet points, 1. for numbered lists
     - Preserve dialogues, vocabulary lists, and example sentences
     - If the page is blank or contains only images: output "[No text content]"

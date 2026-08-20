@@ -128,6 +128,7 @@ export function UploadModal({
       const uploadResponse = await resourcesApi.requestUpload({
         name: name.trim(),
         file_name: file.name,  // Original filename
+        content_type: file.type,
         size_bytes: file.size,
         content_hash: contentHash,
         is_public: isPublic,

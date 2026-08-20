@@ -29,7 +29,7 @@ services:
       - .env
     networks:
       - glot
-    command: ["uv", "run", "arq", "app.workers.extraction_worker.WorkerSettings"]
+    command: ["/app/.venv/bin/arq", "app.workers.extraction_worker.WorkerSettings"]
     deploy:
       resources:
         limits:

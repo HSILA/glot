@@ -8,6 +8,7 @@ FastAPI backend with spaced repetition scheduling.
 cd backend
 uv sync
 docker compose up -d  # from project root
+uv run python -m app.core.app_config
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```

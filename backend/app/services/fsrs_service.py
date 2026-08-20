@@ -14,6 +14,8 @@ FSRS Rating Scale:
     4 = Easy  (Effortless recall, large stability increase)
 """
 
+import hashlib
+import math
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
@@ -26,6 +28,16 @@ from app.schemas.card import NextStatesResponse, SchedulingInfo
 # controls active-session spacing; this persisted timestamp preserves the retry
 # if the browser session is interrupted.
 AGAIN_RETRY_DELAY = timedelta(0)
+
+# Official Anki/FSRS fuzz ranges: (range_start, range_end, delta_per_day).
+# The +1 base below plus these per-day contributions widen the fuzz window as
+# the interval grows, mirroring Anki's `fuzz_range` implementation.
+FUZZ_RANGES = ((2.5, 7.0, 0.15), (7.0, 20.0, 0.10), (20.0, float("inf"), 0.05))
+
+
+def _round_days(value: float) -> int:
+    """Match Go/Anki's positive half-up day rounding."""
+    return math.floor(value + 0.5)
 
 if TYPE_CHECKING:
     from fsrs_rs_python import NextStates
@@ -95,14 +107,19 @@ class FSRSService:
         elapsed = (now - last_review).days
         return max(0, elapsed)
 
-    def get_next_states(self, card: Card) -> "NextStates":
+    def get_next_states(
+        self,
+        card: Card,
+        elapsed_days: int | None = None,
+    ) -> "NextStates":
         """
         Get possible next states for all rating options.
 
         Returns FSRS NextStates with .again, .hard, .good, .easy
         """
         memory_state = self.get_memory_state(card)
-        elapsed_days = self.calculate_elapsed_days(card)
+        if elapsed_days is None:
+            elapsed_days = self.calculate_elapsed_days(card)
 
         return self.fsrs.next_states(
             memory_state,
@@ -110,28 +127,124 @@ class FSRSService:
             elapsed_days,
         )
 
+    def _fuzz_factor(self, card: Card, elapsed_days: int) -> float:
+        """
+        Stable pseudo-random fraction in [0, 1), derived only from fields that
+        stay unchanged between a preview call and an immediately following
+        apply_review call on the same (not-yet-reviewed) card. Using a hash
+        instead of Python's randomized str/object hashing keeps the factor
+        identical across processes, while varying per card identity/state.
+        """
+        seed = f"{card.id}:{card.reps}:{card.stability}:{card.difficulty}:{elapsed_days}"
+        digest = hashlib.sha256(seed.encode()).digest()
+        return int.from_bytes(digest[:8], "big") / 2**64
+
+    @staticmethod
+    def _fuzz_bounds(
+        interval: int,
+        elapsed_days: int,
+        maximum_interval: int,
+    ) -> tuple[int, int]:
+        """Return the official inclusive FSRS fuzz range."""
+        capped_interval = min(interval, maximum_interval)
+        delta = 1.0
+        for start, end, factor in FUZZ_RANGES:
+            delta += factor * max(min(capped_interval, end) - start, 0.0)
+
+        min_ivl = max(2, _round_days(capped_interval - delta))
+        max_ivl = min(_round_days(capped_interval + delta), maximum_interval)
+        if capped_interval > elapsed_days:
+            min_ivl = max(min_ivl, elapsed_days + 1)
+        min_ivl = min(min_ivl, max_ivl)
+        return min_ivl, max_ivl
+
+    def _resolve_interval(
+        self,
+        raw_interval: float,
+        *,
+        elapsed_days: int,
+        fraction: float,
+    ) -> int:
+        """
+        Shared interval policy used by both preview and persistence: round and
+        cap the base interval, then (if enabled) fuzz it deterministically within
+        the official Anki/FSRS ranges. Intervals below 2.5 days are never fuzzed.
+        """
+        base = min(
+            max(1, _round_days(raw_interval)),
+            self.maximum_interval_days,
+        )
+        if not self.enable_fuzz or base < 2.5:
+            return min(base, self.maximum_interval_days)
+
+        min_ivl, max_ivl = self._fuzz_bounds(
+            base,
+            elapsed_days,
+            self.maximum_interval_days,
+        )
+
+        span = max_ivl - min_ivl + 1
+        offset = min(int(fraction * span), span - 1)
+        return min_ivl + offset
+
+    def _resolve_passing_intervals(
+        self,
+        next_states: "NextStates",
+        *,
+        elapsed_days: int,
+        fraction: float,
+    ) -> dict[int, int]:
+        """Resolve Hard/Good/Easy together so fuzz cannot invert their order."""
+        hard = self._resolve_interval(
+            next_states.hard.interval,
+            elapsed_days=elapsed_days,
+            fraction=fraction,
+        )
+        good = self._resolve_interval(
+            next_states.good.interval,
+            elapsed_days=elapsed_days,
+            fraction=fraction,
+        )
+        easy = self._resolve_interval(
+            next_states.easy.interval,
+            elapsed_days=elapsed_days,
+            fraction=fraction,
+        )
+
+        hard = min(hard, good)
+        good = max(good, min(hard + 1, self.maximum_interval_days))
+        easy = max(easy, min(good + 1, self.maximum_interval_days))
+        return {2: hard, 3: good, 4: easy}
+
     def get_next_states_response(self, card: Card) -> NextStatesResponse:
         """Get next states as API response schema."""
-        next_states = self.get_next_states(card)
+        elapsed_days = self.calculate_elapsed_days(card)
+        next_states = self.get_next_states(card, elapsed_days)
+        fraction = self._fuzz_factor(card, elapsed_days)
+        intervals = self._resolve_passing_intervals(
+            next_states,
+            elapsed_days=elapsed_days,
+            fraction=fraction,
+        )
 
         return NextStatesResponse(
             again=SchedulingInfo(
-                interval_days=round(next_states.again.interval, 2),
+                interval_days=0,
                 new_difficulty=round(next_states.again.memory.difficulty, 2),
                 new_stability=round(next_states.again.memory.stability, 2),
             ),
             hard=SchedulingInfo(
-                interval_days=round(next_states.hard.interval, 2),
+                interval_days=intervals[2],
                 new_difficulty=round(next_states.hard.memory.difficulty, 2),
                 new_stability=round(next_states.hard.memory.stability, 2),
             ),
             good=SchedulingInfo(
-                interval_days=round(next_states.good.interval, 2),
+                interval_days=intervals[3],
                 new_difficulty=round(next_states.good.memory.difficulty, 2),
                 new_stability=round(next_states.good.memory.stability, 2),
             ),
             easy=SchedulingInfo(
-                interval_days=round(next_states.easy.interval, 2),
+                interval_days=intervals[4],
                 new_difficulty=round(next_states.easy.memory.difficulty, 2),
                 new_stability=round(next_states.easy.memory.stability, 2),
             ),
@@ -156,7 +269,13 @@ class FSRSService:
             scheduled_days = (card.next_review_at - card.last_review_at).days
 
         # Get next states and select based on rating
-        next_states = self.get_next_states(card)
+        next_states = self.get_next_states(card, elapsed_days)
+        fraction = self._fuzz_factor(card, elapsed_days)
+        intervals = self._resolve_passing_intervals(
+            next_states,
+            elapsed_days=elapsed_days,
+            fraction=fraction,
+        )
 
         rating_map = {
             1: next_states.again,
@@ -166,12 +285,14 @@ class FSRSService:
         }
         selected_state = rating_map[rating]
 
-        # Calculate new interval (capped by maximum). Passing ratings stay on the
-        # existing day-based schedule; Again is persisted as due immediately so
-        # an interrupted session still surfaces the failed card today.
-        interval_days = min(
-            int(max(1, round(selected_state.interval))),
-            self.maximum_interval_days,
+        # Same shared policy as get_next_states_response, so the previewed and
+        # persisted interval for an unreviewed card always agree. Again is
+        # persisted as due immediately so an interrupted session still
+        # surfaces the failed card today.
+        interval_days = (
+            0
+            if rating == 1
+            else intervals[rating]
         )
 
         # Update card fields

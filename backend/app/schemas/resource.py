@@ -14,11 +14,13 @@ class UploadRequest(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=255, description="User's custom name for the resource")
     file_name: str = Field(..., min_length=1, max_length=255, description="Original file name")
+    content_type: str = Field(..., min_length=1, description="MIME type of the file")
     size_bytes: int = Field(..., gt=0, description="File size in bytes")
     content_hash: str = Field(
         ...,
         min_length=64,
         max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
         description="SHA-256 hash of file content (computed client-side)",
     )
     is_public: bool = Field(default=False, description="Whether resource is public")

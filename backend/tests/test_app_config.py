@@ -423,9 +423,32 @@ def test_empty_allowed_types_rejected(tmp_path):
         load_app_config(path)
 
 
+@pytest.mark.parametrize(
+    "allowed_types",
+    [["text/plain"], ["application/pdf", "text/plain"], ["application/pdf", "application/pdf"]],
+)
+def test_unsupported_or_duplicate_allowed_types_rejected(tmp_path, allowed_types):
+    data = valid_config()
+    data["resources"]["allowed_types"] = allowed_types
+    path = write_config(tmp_path, data)
+
+    with pytest.raises(AppConfigError, match="allowed_types"):
+        load_app_config(path)
+
+
 def test_empty_jwt_algorithm_rejected(tmp_path):
     data = valid_config()
     data["auth"]["jwt_algorithm"] = ""
+    path = write_config(tmp_path, data)
+
+    with pytest.raises(AppConfigError, match="jwt_algorithm"):
+        load_app_config(path)
+
+
+@pytest.mark.parametrize("algorithm", ["BOGUS", "RS256", "HS512"])
+def test_unsupported_jwt_algorithm_rejected(tmp_path, algorithm):
+    data = valid_config()
+    data["auth"]["jwt_algorithm"] = algorithm
     path = write_config(tmp_path, data)
 
     with pytest.raises(AppConfigError, match="jwt_algorithm"):
@@ -467,6 +490,9 @@ def test_database_pool_max_overflow_zero_accepted(tmp_path):
         "",
         "5/day/extra",
         "5 per minute",
+        "0/minute",
+        "5/0minutes",
+        "00/hour",
     ],
 )
 def test_invalid_rate_limit_format_rejected(tmp_path, value):

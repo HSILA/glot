@@ -14,13 +14,19 @@ Endpoints:
     GET    /resources/{id}/progress  - Get extraction progress
 """
 
+import hashlib
+import io
+import logging
 from datetime import UTC, datetime, timedelta
-from typing import Annotated
+from typing import Annotated, NoReturn
 
+import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from PIL import Image
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlmodel import select
+from sqlmodel import col, select
 
 from app.core import get_settings
 from app.core.app_config import get_app_config
@@ -37,6 +43,7 @@ from app.schemas.resource import (
     UploadResponse,
 )
 from app.services import RedisService, StorageService
+from app.services.storage_service import StorageObjectTooLargeError
 
 router = APIRouter()
 
@@ -147,6 +154,31 @@ def _build_resource_read(
     )
 
 
+def _is_publicly_available(resource: Resource) -> bool:
+    """Public access starts only after server-side upload validation."""
+    return resource.is_public and resource.upload_confirmed
+
+
+async def _enforce_resource_capacity(
+    session: AsyncSession,
+    user_id: int | None,
+    maximum: int,
+) -> None:
+    if user_id is None:
+        raise RuntimeError("Authenticated user must have a persisted ID")
+    count_query = (
+        select(func.count())
+        .select_from(UserResource)
+        .where(UserResource.user_id == user_id)
+    )
+    result = await session.execute(count_query)
+    if (result.scalar() or 0) >= maximum:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"File limit reached. Maximum is {maximum} files",
+        )
+
+
 @router.post("/upload", response_model=UploadResponse)
 async def request_upload(
     request: UploadRequest,
@@ -162,26 +194,21 @@ async def request_upload(
     """
     resources_config = get_app_config().resources
 
+    # Reject disallowed MIME types / non-PDF file names before any DB work.
+    if (
+        request.content_type not in resources_config.allowed_types
+        or not request.file_name.lower().endswith(".pdf")
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PDF files are supported",
+        )
+
     # Check file size limit
     if request.size_bytes > resources_config.max_size_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"File too large. Maximum size is {resources_config.max_size_bytes // (1024 * 1024)} MB",
-        )
-
-    # Check user's file count limit
-    count_query = (
-        select(func.count())
-        .select_from(UserResource)
-        .where(UserResource.user_id == current_user.id)
-    )
-    result = await session.execute(count_query)
-    current_count = result.scalar() or 0
-
-    if current_count >= resources_config.max_files_per_user:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File limit reached. Maximum is {resources_config.max_files_per_user} files",
         )
 
     # Check if content already exists (deduplication)
@@ -191,20 +218,61 @@ async def request_upload(
     existing_resource = existing.scalar_one_or_none()
 
     if existing_resource:
-        # Content exists - check if user already has it
         user_has_it = await session.execute(
             select(UserResource).where(
                 UserResource.user_id == current_user.id,
                 UserResource.resource_id == existing_resource.id,
             )
         )
-        if user_has_it.scalar_one_or_none():
+        user_resource = user_has_it.scalar_one_or_none()
+
+        if not existing_resource.upload_confirmed:
+            if existing_resource.uploaded_by != current_user.id:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="This upload is still being validated",
+                )
+            if existing_resource.size_bytes != request.size_bytes:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="Pending upload metadata does not match this file",
+                )
+            if user_resource is None:
+                await _enforce_resource_capacity(
+                    session,
+                    current_user.id,
+                    resources_config.max_files_per_user,
+                )
+                user_resource = UserResource(
+                    user_id=current_user.id,
+                    resource_id=existing_resource.id,
+                    name=request.name,
+                )
+                session.add(user_resource)
+                await session.flush()
+
+            upload_url = storage.generate_upload_url(
+                request.content_hash,
+                content_type=request.content_type,
+            )
+            return UploadResponse(
+                upload_url=upload_url,
+                resource_id=existing_resource.id,
+                expires_in=900,
+            )
+
+        if user_resource is not None:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="You already have this file in your library",
             )
 
-        # Link user to existing resource (no upload needed)
+        # Confirmed content can be linked without another upload.
+        await _enforce_resource_capacity(
+            session,
+            current_user.id,
+            resources_config.max_files_per_user,
+        )
         user_resource = UserResource(
             user_id=current_user.id,
             resource_id=existing_resource.id,
@@ -213,12 +281,17 @@ async def request_upload(
         session.add(user_resource)
         await session.flush()
 
-        # Return empty upload_url to signal no upload needed
         return UploadResponse(
-            upload_url="",  # Empty = already exists
+            upload_url="",
             resource_id=existing_resource.id,
             expires_in=0,
         )
+
+    await _enforce_resource_capacity(
+        session,
+        current_user.id,
+        resources_config.max_files_per_user,
+    )
 
     # New content - create resource record
     # NOTE: page_count is computed server-side after upload confirmation.
@@ -226,13 +299,21 @@ async def request_upload(
         content_hash=request.content_hash,
         size_bytes=request.size_bytes,
         page_count=None,
+        upload_confirmed=False,
         file_name=request.file_name,  # Store original filename
         is_public=request.is_public,
         extraction_status=ExtractionStatus.NONE,
         uploaded_by=current_user.id,
     )
-    session.add(resource)
-    await session.flush()
+    try:
+        async with session.begin_nested():
+            session.add(resource)
+            await session.flush()
+    except IntegrityError:
+        # A concurrent request inserted the same content hash. The unique
+        # constraint is authoritative; reload its row through the normal
+        # existing-resource path instead of leaking a 500.
+        return await request_upload(request, session, current_user, storage)
 
     # Create user_resource link with custom name
     user_resource = UserResource(
@@ -243,14 +324,39 @@ async def request_upload(
     session.add(user_resource)
     await session.flush()
 
-    # Generate presigned URL using real content hash
-    upload_url = storage.generate_upload_url(request.content_hash)
+    # Generate presigned URL using real content hash and validated content type
+    upload_url = storage.generate_upload_url(
+        request.content_hash,
+        content_type=request.content_type,
+    )
 
     return UploadResponse(
         upload_url=upload_url,
         resource_id=resource.id,
         expires_in=900,
     )
+
+
+async def _reject_upload(
+    session: AsyncSession,
+    storage: StorageService,
+    resource: Resource,
+    user_resource: UserResource,
+    detail: str,
+) -> NoReturn:
+    """Delete the pending raw object and DB rows for a failed upload confirmation."""
+    try:
+        await storage.async_delete_file(resource.content_hash, folder="raw")
+    except Exception as exc:
+        logging.warning(
+            "Failed to delete rejected raw upload %s: %s",
+            resource.content_hash,
+            exc,
+        )
+    await session.delete(user_resource)
+    await session.delete(resource)
+    await session.commit()
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=detail)
 
 
 @router.post("/upload/confirm", response_model=ResourceRead)
@@ -261,9 +367,12 @@ async def confirm_upload(
     storage: Annotated[StorageService, Depends(get_storage_service)] = None,
 ):
     """
-    Confirm upload completion and generate thumbnail.
+    Confirm upload completion, verify content integrity, and generate a thumbnail.
 
-    Called after file is uploaded to R2. Generates a thumbnail for display.
+    Called after file is uploaded to R2. The client-declared metadata (size,
+    hash) is untrusted until we download the object ourselves and check it -
+    otherwise a caller could presign, upload arbitrary content, and confirm
+    a resource that doesn't match what deduplication/downloads assume it is.
     """
     # Get the resource
     resource = await session.get(Resource, resource_id)
@@ -293,37 +402,71 @@ async def confirm_upload(
             detail="Resource not in your library",
         )
 
-    # Ensure authoritative page_count and thumbnail from the uploaded PDF.
-    needs_page_count = not resource.page_count
-    needs_thumbnail = not await storage.async_file_exists(
-        resource.content_hash,
-        folder="thumbnails",
-    )
+    # Always re-download and verify: the uploaded object is untrusted until
+    # its actual bytes are checked against the metadata that was requested.
+    max_bytes = min(resource.size_bytes, get_app_config().resources.max_size_bytes)
+    try:
+        pdf_bytes = await storage.async_download_file_bounded(
+            resource.content_hash,
+            folder="raw",
+            max_bytes=max_bytes,
+        )
+    except StorageObjectTooLargeError:
+        await _reject_upload(
+            session,
+            storage,
+            resource,
+            user_resource,
+            "Uploaded file exceeds the declared size",
+        )
 
-    if needs_page_count or needs_thumbnail:
+    actual_size = len(pdf_bytes)
+    actual_hash = hashlib.sha256(pdf_bytes).hexdigest()
+    if actual_size != resource.size_bytes or actual_hash != resource.content_hash:
+        await _reject_upload(
+            session,
+            storage,
+            resource,
+            user_resource,
+            "Uploaded file does not match the requested metadata",
+        )
+
+    try:
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        await _reject_upload(
+            session,
+            storage,
+            resource,
+            user_resource,
+            "Uploaded file is not a valid PDF",
+        )
+
+    if len(doc) < 1:
+        doc.close()
+        await _reject_upload(
+            session,
+            storage,
+            resource,
+            user_resource,
+            "Uploaded file is not a valid PDF",
+        )
+
+    try:
+        resource.page_count = len(doc)
+        resource.upload_confirmed = True
+        await session.flush()
+
+        # Thumbnail generation is best-effort and only attempted once the
+        # document itself has been proven to be a valid, matching PDF.
         try:
-            import io
-
-            import fitz  # PyMuPDF
-            from PIL import Image
-
-            # Download PDF from R2
-            pdf_bytes = await storage.async_download_file(
+            if not await storage.async_file_exists(
                 resource.content_hash,
-                folder="raw",
-            )
-
-            # Open PDF with PyMuPDF
-            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-
-            if needs_page_count:
-                resource.page_count = len(doc)
-                await session.flush()
-
-            if needs_thumbnail and len(doc) > 0:
+                folder="thumbnails",
+            ):
                 first_page = doc[0]
                 pix = first_page.get_pixmap(dpi=150)
-                img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
                 img.thumbnail((400, 600), Image.Resampling.LANCZOS)
 
                 thumbnail_buffer = io.BytesIO()
@@ -332,14 +475,10 @@ async def confirm_upload(
                     thumbnail_buffer.getvalue(),
                     resource.content_hash,
                 )
-
-            doc.close()
         except Exception as e:
-            # Log but don't fail - thumbnail is optional, page_count can be recovered during extraction prep.
-            import logging
-
-            logging.warning(f"Failed to finalize upload metadata for {resource_id}: {e}")
-
+            logging.warning(f"Failed to generate thumbnail for {resource_id}: {e}")
+    finally:
+        doc.close()
     await session.refresh(resource)
     return _build_resource_read(resource, user_resource, current_user.id)
 
@@ -392,8 +531,11 @@ async def list_public_resources(
     offset: int = Query(0, ge=0),
 ):
     """List public resources (Public Library)."""
-    # Base query for public resources
-    base_query = select(Resource).where(Resource.is_public == True)  # noqa: E712
+    # Base query for confirmed public resources
+    base_query = select(Resource).where(
+        Resource.is_public == True,  # noqa: E712
+        col(Resource.upload_confirmed).is_(True),
+    )
 
     if search:
         base_query = base_query.where(Resource.file_name.ilike(f"%{search}%"))
@@ -470,7 +612,7 @@ async def get_resource(
     )
     user_resource = ur_result.scalar_one_or_none()
 
-    if not user_resource and not resource.is_public:
+    if not user_resource and not _is_publicly_available(resource):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized",
@@ -508,7 +650,7 @@ async def add_public_resource(
     resources_config = get_app_config().resources
 
     resource = await session.get(Resource, resource_id)
-    if not resource or not resource.is_public:
+    if not resource or not _is_publicly_available(resource):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Public resource not found",
@@ -692,7 +834,7 @@ async def get_download_url(
     )
     user_resource = ur_result.scalar_one_or_none()
 
-    if not user_resource and not resource.is_public:
+    if not user_resource and not _is_publicly_available(resource):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Resource not accessible",
@@ -729,7 +871,10 @@ async def get_thumbnail_url(
             UserResource.resource_id == resource_id,
         )
     )
-    if not ur_result.scalar_one_or_none() and not resource.is_public:
+    if (
+        not ur_result.scalar_one_or_none()
+        and not _is_publicly_available(resource)
+    ):
         raise HTTPException(status_code=403, detail="Resource not accessible")
 
     # Generate URL
@@ -847,6 +992,12 @@ async def trigger_extraction(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Resource not in your library",
+        )
+
+    if not resource.upload_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload must be confirmed before extraction",
         )
 
     # Only block if already completed

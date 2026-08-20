@@ -156,6 +156,7 @@ describe("resourcesApi.requestUpload", () => {
     const res = await resourcesApi.requestUpload({
       name: "Doc",
       file_name: "Doc.pdf",
+      content_type: "application/pdf",
       size_bytes: 200,
       content_hash: "abcd",
       is_public: false,
@@ -168,6 +169,7 @@ describe("resourcesApi.requestUpload", () => {
     expect(JSON.parse(call.init?.body as string)).toMatchObject({
       name: "Doc",
       file_name: "Doc.pdf",
+      content_type: "application/pdf",
     });
   });
 
@@ -180,6 +182,7 @@ describe("resourcesApi.requestUpload", () => {
       resourcesApi.requestUpload({
         name: "Doc",
         file_name: "Doc.pdf",
+        content_type: "application/pdf",
         size_bytes: 9999999999,
         content_hash: "abcd",
         is_public: false,

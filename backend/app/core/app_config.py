@@ -20,7 +20,9 @@ live in `app.core.Settings` instead. Per-user scheduling settings
 """
 
 import re
+import sys
 from functools import lru_cache
+from importlib import resources
 from pathlib import Path
 
 import yaml
@@ -38,11 +40,17 @@ from pydantic import (
 # The config directory sits next to the `app` package, both locally
 # (backend/config) and in the image (/app/config, see Dockerfile).
 DEFAULT_APP_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "app.yaml"
+PACKAGED_APP_CONFIG = "config/app.yaml"
 
 # Guards against a typo turning into an effectively unbounded interval.
 MAX_ALLOWED_INTERVAL_DAYS = 36500
 
-_RATE_LIMIT_PATTERN = re.compile(r"^\d+/\d*(second|minute|hour|day)s?$")
+# Count and period multiplier must both be positive with no leading zero.
+_RATE_LIMIT_PATTERN = re.compile(r"^[1-9]\d*/([1-9]\d*)?(second|minute|hour|day)s?$")
+
+# Only algorithm actually wired up for token signing/verification.
+_SUPPORTED_JWT_ALGORITHMS = {"HS256"}
+_SUPPORTED_RESOURCE_TYPES = {"application/pdf"}
 
 
 class AppConfigError(RuntimeError):
@@ -73,6 +81,16 @@ class AuthSection(BaseModel):
     access_token_expire_minutes: StrictInt = Field(ge=1)
     refresh_token_expire_days: StrictInt = Field(ge=1)
 
+    @field_validator("jwt_algorithm")
+    @classmethod
+    def validate_jwt_algorithm(cls, value: str) -> str:
+        if value not in _SUPPORTED_JWT_ALGORITHMS:
+            raise ValueError(
+                f"Unsupported jwt_algorithm: {value!r} "
+                f"(supported: {sorted(_SUPPORTED_JWT_ALGORITHMS)})"
+            )
+        return value
+
 
 class ResourcesSection(BaseModel):
     """Upload constraints applied to every user."""
@@ -82,6 +100,16 @@ class ResourcesSection(BaseModel):
     max_size_bytes: StrictInt = Field(ge=1)
     max_files_per_user: StrictInt = Field(ge=1)
     allowed_types: list[StrictStr] = Field(min_length=1)
+
+    @field_validator("allowed_types")
+    @classmethod
+    def validate_allowed_types(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or set(value) != _SUPPORTED_RESOURCE_TYPES:
+            raise ValueError(
+                "allowed_types must list each supported runtime type exactly once: "
+                f"{sorted(_SUPPORTED_RESOURCE_TYPES)}"
+            )
+        return value
 
 
 class ExtractionSection(BaseModel):
@@ -150,6 +178,42 @@ class AppConfig(BaseModel):
         return value
 
 
+def _read_config(path: Path | None) -> tuple[str, str]:
+    if path is not None:
+        config_path = Path(path)
+        try:
+            return config_path.read_text(encoding="utf-8"), str(config_path)
+        except FileNotFoundError as exc:
+            raise AppConfigError(
+                f"App config file not found: {config_path}. "
+                "This file is required and must be committed to the repository."
+            ) from exc
+        except OSError as exc:
+            raise AppConfigError(
+                f"App config file could not be read: {config_path}: {exc}"
+            ) from exc
+
+    try:
+        packaged = resources.files("app").joinpath(PACKAGED_APP_CONFIG)
+        return packaged.read_text(encoding="utf-8"), f"package:{PACKAGED_APP_CONFIG}"
+    except (FileNotFoundError, ModuleNotFoundError, OSError):
+        pass
+
+    try:
+        return (
+            DEFAULT_APP_CONFIG_PATH.read_text(encoding="utf-8"),
+            str(DEFAULT_APP_CONFIG_PATH),
+        )
+    except FileNotFoundError as exc:
+        raise AppConfigError(
+            "App config file not found in the source tree or installed package."
+        ) from exc
+    except OSError as exc:
+        raise AppConfigError(
+            f"App config file could not be read: {DEFAULT_APP_CONFIG_PATH}: {exc}"
+        ) from exc
+
+
 def load_app_config(path: Path | None = None) -> AppConfig:
     """
     Load and validate the app config file.
@@ -161,40 +225,46 @@ def load_app_config(path: Path | None = None) -> AppConfig:
         AppConfigError: If the file is missing, unreadable, not valid YAML,
             or does not satisfy the schema.
     """
-    config_path = Path(path) if path is not None else DEFAULT_APP_CONFIG_PATH
-
-    try:
-        raw = config_path.read_text(encoding="utf-8")
-    except FileNotFoundError as exc:
-        raise AppConfigError(
-            f"App config file not found: {config_path}. "
-            "This file is required and must be committed to the repository."
-        ) from exc
-    except OSError as exc:
-        raise AppConfigError(
-            f"App config file could not be read: {config_path}: {exc}"
-        ) from exc
+    raw, config_source = _read_config(path)
 
     try:
         data = yaml.safe_load(raw)
     except yaml.YAMLError as exc:
         raise AppConfigError(
-            f"App config file is not valid YAML: {config_path}: {exc}"
+            f"App config file is not valid YAML: {config_source}: {exc}"
         ) from exc
 
     if not isinstance(data, dict):
         raise AppConfigError(
             f"App config file must contain a YAML mapping at the top level: "
-            f"{config_path} (got {type(data).__name__})"
+            f"{config_source} (got {type(data).__name__})"
         )
 
     try:
         return AppConfig.model_validate(data)
     except ValidationError as exc:
-        raise AppConfigError(f"Invalid app config file: {config_path}\n{exc}") from exc
+        raise AppConfigError(f"Invalid app config file: {config_source}\n{exc}") from exc
 
 
 @lru_cache
 def get_app_config() -> AppConfig:
     """Get the cached app config from the committed config file."""
     return load_app_config()
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = sys.argv[1:] if argv is None else argv
+    if len(args) > 1:
+        print("usage: python -m app.core.app_config [path]", file=sys.stderr)
+        return 2
+
+    try:
+        load_app_config(Path(args[0]) if args else None)
+    except AppConfigError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
