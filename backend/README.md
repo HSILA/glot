@@ -8,6 +8,7 @@ FastAPI backend with spaced repetition scheduling.
 cd backend
 uv sync
 docker compose up -d  # from project root
+uv run python -m app.core.app_config
 uv run alembic upgrade head
 uv run uvicorn app.main:app --reload
 ```
@@ -43,14 +44,13 @@ app/
 
 ## Configuration
 
-### Global Settings (Environment Variables)
+### App Config
 
-Set in `.env` or environment. Apply to all users.
-
-| Setting | Default | Env Variable |
-|---------|---------|--------------|
-| `maximum_interval_days` | 365 | `MAXIMUM_INTERVAL_DAYS` |
-| `enable_fuzz` | true | `ENABLE_FUZZ` |
+Stable, non-secret policy (scheduling, auth token lifetimes, extraction
+model, database pool sizing, rate limits, resource limits) lives in the
+concise, version-controlled `config/app.yaml`, validated by Pydantic at
+startup. Secrets and deployment-specific values (DB/Redis URLs, JWT secret,
+CORS, R2 credentials) stay in the environment.
 
 ### Per-User Settings (Database)
 

@@ -7,6 +7,7 @@ Architecture:
 - check_stale_extractions: Re-queue stuck pages (run at worker startup)
 - check_orphan_resources: Fix resources stuck in PROCESSING (run at worker startup)
 - recover_incomplete_extractions: Startup recovery for incomplete processing resources
+- sweep_expired_uploads: Reclaim abandoned, never-confirmed uploads (run at worker startup)
 
 Recovery is cronless: there is no periodic DB polling. Recovery runs once at
 worker startup, and otherwise on-demand when the frontend resumes a resource
@@ -22,15 +23,37 @@ from datetime import timedelta
 import fitz  # PyMuPDF
 from loguru import logger
 from PIL import Image
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.agents import ExtractionAgent
+from app.api.v1.resources import UPLOAD_URL_EXPIRES_SECONDS, _staging_upload_key
 from app.core import get_settings
+from app.core.app_config import get_app_config
 from app.core.datetime_utils import utc_now
 from app.db import async_session_factory
-from app.models import PageExtraction, PageStatus, Resource
+from app.models import PageExtraction, PageStatus, Resource, UserResource
 from app.models.resource import ExtractionStatus
 from app.services import RedisService, StorageService
+
+# Bound how many abandoned upload reservations a single sweeper run reclaims,
+# so a large backlog never holds the row locks (or the startup) indefinitely.
+_SWEEP_BATCH_LIMIT = 200
+
+# Storage prefix holding per-resource staging objects (uploads/{id}.pdf).
+_STAGING_PREFIX = "uploads"
+
+
+def _staging_key_resource_id(key: str) -> int | None:
+    """Extract the resource id from a staging key like ``uploads/7.pdf``."""
+    if not key.startswith(_STAGING_PREFIX + "/"):
+        return None
+    stem = key[len(_STAGING_PREFIX) + 1 :]
+    if not stem.endswith(".pdf"):
+        return None
+    try:
+        return int(stem[: -len(".pdf")])
+    except ValueError:
+        return None
 
 
 def _prepare_job_id(resource_id: int) -> str:
@@ -138,7 +161,7 @@ def _get_or_init_extraction_agent(ctx: dict) -> ExtractionAgent:
         settings = _get_or_init_worker_settings(ctx)
         agent = ExtractionAgent(
             api_key=settings.openrouter_api_key,
-            model_id=settings.extraction_agent_model,
+            model_id=get_app_config().extraction.agent_model,
         )
         ctx["extraction_agent"] = agent
     return agent
@@ -166,6 +189,10 @@ async def prepare_extraction(ctx: dict, resource_id: int) -> dict:
             if not resource:
                 logger.error(f"Resource {resource_id} not found")
                 return {"success": False, "error": "Resource not found"}
+
+            if not resource.upload_confirmed:
+                logger.error(f"Resource {resource_id} upload is not confirmed")
+                return {"success": False, "error": "Upload not confirmed"}
 
             resource.extraction_status = ExtractionStatus.PROCESSING
             await session.flush()
@@ -705,6 +732,140 @@ async def recover_incomplete_extractions(ctx: dict):
             return {"error": str(e)}
 
 
+async def sweep_expired_uploads(ctx: dict):
+    """Reclaim abandoned upload artifacts whose reservation expired long ago.
+
+    Two kinds of garbage:
+
+    1. Never-confirmed uploads: the file was never uploaded, or was uploaded
+       but never confirmed, within the presigned-URL window plus a grace period.
+       These are unreachable (URL is dead, ownership has lapsed) so we delete
+       the staging object and the DB rows.
+
+    2. Staging objects left behind on confirmed resources: after a successful
+       confirm the staging key ``uploads/{id}.pdf`` is never used again, but a
+       transient delete failure at confirm time can leave it behind. These are
+       always safe to delete once the original URL window has fully passed.
+
+    The raw/ + thumbnail content-addressed objects are intentionally left alone
+    here: they are keyed by content hash and reused by any future upload of the
+    same content, so they are not pure garbage and require a reference-count
+    check before deletion (tracked as a follow-up).
+
+    Runs once at worker startup (cronless - no periodic DB polling).
+    """
+    storage = _get_or_init_storage(ctx)
+
+    logger.info("Sweeping expired upload reservations...")
+
+    async with async_session_factory() as session:
+        try:
+            grace = get_app_config().resources.abandoned_upload_grace_seconds
+            cutoff = utc_now() - timedelta(
+                seconds=UPLOAD_URL_EXPIRES_SECONDS + grace
+            )
+
+            # 1. Reclaim never-confirmed reservations. Commit (even when nothing
+            #    was swept) so the FOR UPDATE locks are released before any R2
+            #    network I/O below.
+            result = await session.execute(
+                select(Resource)
+                .where(
+                    Resource.upload_confirmed == False,  # noqa: E712
+                    Resource.uploaded_at < cutoff,
+                )
+                .with_for_update(skip_locked=True)
+                .limit(_SWEEP_BATCH_LIMIT)
+            )
+            expired = result.scalars().all()
+
+            swept = 0
+            for resource in expired:
+                # A confirm starting just before us holds the row lock, so it
+                # is skipped here; re-check to avoid racing on the refreshed row.
+                if resource.upload_confirmed:
+                    continue
+                try:
+                    await storage.async_delete_file(
+                        _staging_upload_key(resource.id),
+                        folder=None,
+                    )
+                except Exception as e:
+                    # Leave the row so a later sweep retries the object; deleting
+                    # the row now would orphan the object unreachably in storage.
+                    logger.warning(
+                        f"Skipping expired upload {resource.id}: "
+                        f"staging delete failed: {e}"
+                    )
+                    continue
+                await session.execute(
+                    delete(UserResource).where(
+                        UserResource.resource_id == resource.id
+                    )
+                )
+                await session.delete(resource)
+                swept += 1
+                logger.info(f"Swept expired upload reservation {resource.id}")
+
+            await session.commit()
+
+            # 2. Clean leftover staging objects on CONFIRMED resources by
+            #    enumerating what actually exists in storage (the source of
+            #    truth), so we make progress and only count real deletions.
+            staging_cleaned = 0
+            try:
+                keys = await storage.async_list_object_keys(
+                    _STAGING_PREFIX, limit=_SWEEP_BATCH_LIMIT
+                )
+            except Exception as e:
+                logger.warning(f"Failed to list staging objects: {e}")
+                keys = []
+
+            # Resolve all candidate resource ids in ONE query, then commit so the
+            # transaction is closed before any R2 network I/O. Keeps the sweep
+            # from holding an idle-in-transaction connection across the deletes.
+            id_col = Resource.__table__.c.id
+            resource_ids = [
+                rid
+                for key in keys
+                if (rid := _staging_key_resource_id(key)) is not None
+            ]
+            rows_by_id: dict[int, Resource | None] = {}
+            if resource_ids:
+                known = await session.execute(
+                    select(Resource).where(id_col.in_(resource_ids))
+                )
+                rows_by_id = {r.id: r for r in known.scalars().all()}
+                await session.commit()
+
+            for key in keys:
+                resource_id = _staging_key_resource_id(key)
+                if resource_id is None:
+                    continue
+                row = rows_by_id.get(resource_id)
+                # Safe to delete staging when the row is gone (orphan) or the
+                # resource is confirmed (staging is never needed again) and old.
+                if row is None or (
+                    row.upload_confirmed and row.uploaded_at < cutoff
+                ):
+                    try:
+                        await storage.async_delete_file(key, folder=None)
+                        staging_cleaned += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to clean staging {key}: {e}"
+                        )
+
+            logger.info(
+                f"Swept {swept} expired reservations, "
+                f"cleaned {staging_cleaned} leftover staging objects"
+            )
+            return {"swept": swept, "staging_cleaned": staging_cleaned}
+        except Exception as e:
+            logger.exception(f"Error sweeping expired uploads: {e}")
+            return {"error": str(e)}
+
+
 async def on_worker_startup(ctx: dict):
     """Initialize shared worker services and run recovery checks."""
     logger.info("Worker startup: initializing shared services...")
@@ -724,6 +885,9 @@ async def on_worker_startup(ctx: dict):
 
     incomplete_result = await recover_incomplete_extractions(ctx)
     logger.info(f"Incomplete extractions check: {incomplete_result}")
+
+    upload_result = await sweep_expired_uploads(ctx)
+    logger.info(f"Expired upload sweep: {upload_result}")
 
     logger.info("Worker startup recovery complete")
 
@@ -765,4 +929,4 @@ class WorkerSettings:
     job_timeout = 1200
     keep_result = 0
     health_check_interval = 600
-    poll_delay = get_settings().extraction_worker_poll_delay_seconds
+    poll_delay = get_app_config().extraction.worker_poll_delay_seconds

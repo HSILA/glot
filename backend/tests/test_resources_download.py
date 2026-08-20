@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.v1.resources import get_download_url, get_thumbnail_url
 from app.models import Resource, User, UserResource
@@ -63,6 +64,39 @@ async def test_get_download_url_returns_hash_filename_and_hash_based_url() -> No
         folder="raw",
         expires_in=3600,
     )
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_public_upload_is_not_downloadable_by_other_users() -> None:
+    resource = Resource(
+        id=1,
+        content_hash="c" * 64,
+        size_bytes=123,
+        page_count=None,
+        upload_confirmed=False,
+        file_name="pending.pdf",
+        is_public=True,
+        uploaded_by=1,
+    )
+    current_user = User(
+        id=2,
+        email="other@example.com",
+        password_hash="hashed",
+        is_active=True,
+    )
+    session = AsyncMock()
+    session.get.return_value = resource
+    session.execute.return_value = _ScalarResult(None)
+
+    with pytest.raises(HTTPException) as exc:
+        await get_download_url(
+            resource_id=1,
+            session=session,
+            current_user=current_user,
+            storage=Mock(),
+        )
+
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio

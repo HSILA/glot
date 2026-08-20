@@ -18,6 +18,15 @@ from botocore.config import Config
 from app.core import Settings
 
 
+class StorageObjectTooLargeError(ValueError):
+    """Raised before an object larger than the allowed bound is materialized."""
+
+
+class StorageObjectNotFoundError(Exception):
+    """Raised when a storage object that should exist (e.g. a staged upload)
+    is missing. Callers surface this as a normal 4xx rather than a 500."""
+
+
 class StorageService:
     """
     Cloudflare R2 storage operations.
@@ -42,22 +51,19 @@ class StorageService:
 
     def generate_upload_url(
         self,
-        content_hash: str,
+        key_or_hash: str,
         content_type: str = "application/pdf",
-        expires_in: int = 900,  # 15 minutes
+        expires_in: int = 900,
+        folder: str | None = "raw",
     ) -> str:
-        """
-        Generate a presigned URL for direct upload to R2.
+        """Generate a presigned direct-upload URL."""
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        else:
+            key = f"{folder}/{key_or_hash}"
 
-        Args:
-            content_hash: SHA-256 hash (used as filename)
-            content_type: MIME type of the file
-            expires_in: URL expiration in seconds
-
-        Returns:
-            Presigned URL for PUT request
-        """
-        key = f"raw/{content_hash}.pdf"
         return self._client.generate_presigned_url(
             "put_object",
             Params={
@@ -174,6 +180,66 @@ class StorageService:
         response = self._client.get_object(Bucket=self._bucket_name, Key=key)
         return response["Body"].read()
 
+    def download_file_bounded(
+        self,
+        key_or_hash: str,
+        max_bytes: int,
+        folder: str | None = "raw",
+    ) -> bytes:
+        """Download at most ``max_bytes`` and reject oversized objects early."""
+        if max_bytes < 0:
+            raise ValueError("max_bytes must be non-negative")
+
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        elif folder == "thumbnails":
+            key = f"thumbnails/{key_or_hash}.webp"
+        else:
+            key = f"{folder}/{key_or_hash}"
+
+        try:
+            response = self._client.get_object(Bucket=self._bucket_name, Key=key)
+        except self._client.exceptions.NoSuchKey as exc:
+            # A missing key is a normal "nothing staged here yet" condition, not
+            # an infrastructure failure. Let callers return a clean 4xx.
+            raise StorageObjectNotFoundError(
+                f"Storage object not found: {key}"
+            ) from exc
+        except self._client.exceptions.ClientError as exc:
+            # R2 may surface a missing key as a generic ClientError rather than
+            # the modeled NoSuchKey. Distinguish a genuinely absent object from
+            # a bucket-level fault (which also comes back 404) by error code, so
+            # a misconfigured bucket is never mistaken for an empty upload.
+            error = (
+                exc.response.get("Error", {})
+                if hasattr(exc, "response") and exc.response
+                else {}
+            )
+            if error.get("Code") == "NoSuchKey":
+                raise StorageObjectNotFoundError(
+                    f"Storage object not found: {key}"
+                ) from exc
+            raise
+
+        body = response["Body"]
+        try:
+            content_length = response.get("ContentLength")
+            if content_length is not None and int(content_length) > max_bytes:
+                raise StorageObjectTooLargeError(
+                    f"Object is {content_length} bytes; limit is {max_bytes}"
+                )
+
+            payload = body.read(max_bytes + 1)
+            if len(payload) > max_bytes:
+                raise StorageObjectTooLargeError(
+                    f"Object exceeds the {max_bytes}-byte limit"
+                )
+            return payload
+        finally:
+            body.close()
+
     def delete_file(self, key_or_hash: str, folder: str | None = "raw") -> None:
         """
         Delete a file from R2.
@@ -278,6 +344,28 @@ class StorageService:
         )
         return response.get("KeyCount", 0) > 0
 
+    def list_object_keys(self, prefix: str, limit: int = 200) -> list[str]:
+        """Return up to ``limit`` object keys under ``prefix`` (pagination-aware).
+
+        Used to drive storage-side cleanup by enumerating what actually exists,
+        so a sweeper makes progress regardless of DB row ordering.
+        """
+        if not prefix.endswith("/"):
+            prefix = prefix + "/"
+        keys: list[str] = []
+        kwargs = {"Bucket": self._bucket_name, "Prefix": prefix}
+        while len(keys) < limit:
+            resp = self._client.list_objects_v2(MaxKeys=limit, **kwargs)
+            keys.extend(
+                obj["Key"]
+                for obj in resp.get("Contents", [])
+                if obj.get("Key")
+            )
+            if not resp.get("IsTruncated"):
+                break
+            kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
+        return keys[:limit]
+
     # Async wrappers for network-bound boto3 operations.
     # These keep async API/worker paths from blocking the event loop.
     async def async_upload_file(
@@ -301,6 +389,19 @@ class StorageService:
         folder: str | None = "raw",
     ) -> bytes:
         return await asyncio.to_thread(self.download_file, key_or_hash, folder)
+
+    async def async_download_file_bounded(
+        self,
+        key_or_hash: str,
+        max_bytes: int,
+        folder: str | None = "raw",
+    ) -> bytes:
+        return await asyncio.to_thread(
+            self.download_file_bounded,
+            key_or_hash,
+            max_bytes,
+            folder,
+        )
 
     async def async_delete_file(
         self,
@@ -327,6 +428,9 @@ class StorageService:
 
     async def async_folder_exists(self, prefix: str) -> bool:
         return await asyncio.to_thread(self.folder_exists, prefix)
+
+    async def async_list_object_keys(self, prefix: str, limit: int = 200) -> list[str]:
+        return await asyncio.to_thread(self.list_object_keys, prefix, limit)
 
     async def async_upload_thumbnail(self, image_bytes: bytes, content_hash: str) -> None:
         await asyncio.to_thread(self.upload_thumbnail, image_bytes, content_hash)

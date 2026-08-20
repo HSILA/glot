@@ -34,6 +34,7 @@ export interface ResourceListResponse {
 export interface UploadRequest {
   name: string;
   file_name: string;
+  content_type: string;
   size_bytes: number;
   content_hash: string;
   is_public: boolean;
@@ -102,7 +103,7 @@ class ResourcesApi {
     const res = await fetch(uploadUrl, {
       method: "PUT",
       headers: {
-        "Content-Type": "application/pdf",
+        "Content-Type": file.type,
       },
       body: file,
     });

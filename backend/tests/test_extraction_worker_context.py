@@ -12,8 +12,8 @@ async def test_worker_startup_initializes_and_reuses_ctx_services(
     settings = SimpleNamespace(
         redis_url="redis://example",
         openrouter_api_key="key",
-        extraction_agent_model="model",
     )
+    app_config = SimpleNamespace(extraction=SimpleNamespace(agent_model="model"))
 
     calls = {"redis": 0, "storage": 0, "agent": 0, "redis_connect": 0}
 
@@ -41,6 +41,7 @@ async def test_worker_startup_initializes_and_reuses_ctx_services(
         return {}
 
     monkeypatch.setattr(extraction_worker, "get_settings", lambda: settings)
+    monkeypatch.setattr(extraction_worker, "get_app_config", lambda: app_config)
     monkeypatch.setattr(extraction_worker, "RedisService", FakeRedisService)
     monkeypatch.setattr(extraction_worker, "StorageService", FakeStorageService)
     monkeypatch.setattr(extraction_worker, "ExtractionAgent", FakeExtractionAgent)
@@ -85,8 +86,8 @@ async def test_worker_shutdown_closes_and_clears_ctx() -> None:
 def test_extraction_agent_cached_per_worker_ctx(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = SimpleNamespace(
         openrouter_api_key="key",
-        extraction_agent_model="model",
     )
+    app_config = SimpleNamespace(extraction=SimpleNamespace(agent_model="model"))
     init_calls = {"agent": 0}
 
     class FakeAgent:
@@ -96,6 +97,7 @@ def test_extraction_agent_cached_per_worker_ctx(monkeypatch: pytest.MonkeyPatch)
             init_calls["agent"] += 1
 
     monkeypatch.setattr(extraction_worker, "get_settings", lambda: settings)
+    monkeypatch.setattr(extraction_worker, "get_app_config", lambda: app_config)
     monkeypatch.setattr(extraction_worker, "ExtractionAgent", FakeAgent)
 
     ctx: dict = {}

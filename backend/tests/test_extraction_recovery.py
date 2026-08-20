@@ -197,7 +197,228 @@ async def test_attach_recovery_state_skips_redis_when_no_active(monkeypatch) -> 
     assert read.can_resume_extraction is False
 
 
-# --- extract/resume endpoint re-queues via prepare_extraction (dedupe id) ---
+# --- sweep_expired_uploads (cronless startup reclaim of abandoned uploads) ---
+
+
+def _unconfirmed_upload(resource_id: int = 41) -> Resource:
+    # An abandoned, never-confirmed upload reservation. uploaded_at is old
+    # enough that the SQL predicate would have selected it.
+    return Resource(
+        id=resource_id,
+        content_hash="b" * 64,
+        size_bytes=512,
+        upload_confirmed=False,
+        page_count=None,
+        file_name="doc.pdf",
+        is_public=False,
+        extraction_status=ExtractionStatus.NONE,
+        uploaded_at=datetime(2020, 1, 1, tzinfo=UTC),
+        uploaded_by=1,
+    )
+
+
+class _FakeSessionFactory:
+    """Async session factory that returns an async CM yielding a fake session."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+def _startup_ctx(storage) -> dict:
+    # Supplying a storage object in the ctx avoids initializing a real one.
+    return {"storage": storage}
+
+
+def _result(values) -> Mock:
+    r = Mock()
+    r.scalars.return_value.all.return_value = values
+    return r
+
+
+def _storage(list_keys=None):
+    storage = Mock()
+    storage.async_delete_file = AsyncMock()
+    storage.async_list_object_keys = AsyncMock(
+        return_value=list_keys or []
+    )
+    return storage
+
+
+def _sweep_session(executes):
+    """Build a session for sweep tests.
+
+    ``executes`` is the ordered list of result values for each ``session.execute``
+    call (step-1 candidate select, step-1 delete(UserResource) rows, then the
+    step-2 batched id-resolution query).
+    """
+    session = AsyncMock()
+    session.execute.side_effect = [_result(v) for v in executes]
+    return session
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    # Executes: step-1 candidate select, then delete(UserResource) for the sweep.
+    session = _sweep_session([[resource], []])
+    storage = _storage()  # no leftover staging objects
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 1, "staging_cleaned": 0}
+    # Staging object reclaimed, rows removed, and the lock transaction commits
+    # (even when step 2 finds nothing) so FOR UPDATE locks are released.
+    storage.async_delete_file.assert_awaited_once_with("uploads/41.pdf", folder=None)
+    session.delete.assert_awaited_once_with(resource)
+    session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_skips_confirmed_resources(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    resource.upload_confirmed = True  # a confirm won the race to the row lock
+    session = _sweep_session([[resource]])
+    storage = _storage()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
+    storage.async_delete_file.assert_not_awaited()
+    session.delete.assert_not_awaited()
+    # Lock-releasing commit still runs.
+    session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_cleans_confirmed_staging(monkeypatch) -> None:
+    confirmed = _unconfirmed_upload(resource_id=77)
+    confirmed.upload_confirmed = True  # confirmed; only its staging is garbage
+    # Step 1 finds no expired reservations; step 2 finds the confirmed staging
+    # object in storage and resolves it to the confirmed row.
+    session = _sweep_session([[], [confirmed]])
+    storage = _storage(list_keys=["uploads/77.pdf"])
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0, "staging_cleaned": 1}
+    # Confirmed resources keep their rows but drop the dead staging object.
+    storage.async_delete_file.assert_awaited_once_with("uploads/77.pdf", folder=None)
+    session.delete.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_deletes_orphaned_staging(monkeypatch) -> None:
+    # A staging object exists with NO matching resource row -> orphan, deleted.
+    session = _sweep_session([[], []])  # id-resolution returns nothing
+    storage = _storage(list_keys=["uploads/88.pdf"])
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0, "staging_cleaned": 1}
+    storage.async_delete_file.assert_awaited_once_with("uploads/88.pdf", folder=None)
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_leaves_recent_confirmed_staging(monkeypatch) -> None:
+    # A confirmed resource whose upload is still within the window must NOT be
+    # cleaned; its staging may still be in use by a concurrent request.
+    recent = _unconfirmed_upload(resource_id=99)
+    recent.upload_confirmed = True
+    recent.uploaded_at = datetime.now(UTC) - timedelta(minutes=1)  # too recent
+    session = _sweep_session([[], [recent]])
+    storage = _storage(list_keys=["uploads/99.pdf"])
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
+    storage.async_delete_file.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_is_noop_without_candidates(monkeypatch) -> None:
+    session = _sweep_session([[]])
+    storage = _storage()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
+    session.delete.assert_not_awaited()
+    session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_skips_on_staging_delete_failure(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    session = _sweep_session([[resource]])
+    storage = _storage()
+    storage.async_delete_file = AsyncMock(side_effect=RuntimeError("R2 unavailable"))
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    # If the object can't be deleted, the row is left behind so a later sweep
+    # retries; deleting the row would orphan the object unreachably.
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
+    session.delete.assert_not_awaited()
+    session.commit.assert_awaited()
+
+
+def test_sweep_expired_uploads_is_wired_at_startup() -> None:
+    import inspect
+
+    source = inspect.getsource(extraction_worker.on_worker_startup)
+    # The sweeper must actually be invoked on startup, not merely be importable.
+    assert "sweep_expired_uploads(ctx)" in source
 
 
 @pytest.mark.asyncio

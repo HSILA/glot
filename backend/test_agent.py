@@ -16,9 +16,11 @@ from pathlib import Path
 # Add backend to path
 sys.path.insert(0, str(Path(__file__).parent))
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
+
 from app.agents import ExtractionAgent
 from app.core import get_settings
+from app.core.app_config import get_app_config
 
 
 def create_test_image():
@@ -30,14 +32,14 @@ def create_test_image():
     # Add test text
     text = """
     Test Document
-    
+
     This is a simple test page.
-    
+
     • Bullet point 1
     • Bullet point 2
-    
+
     ## Heading 2
-    
+
     Some paragraph text here.
     """
 
@@ -58,6 +60,7 @@ def main():
     print("🧪 Testing Extraction Agent...\n")
 
     settings = get_settings()
+    extraction_config = get_app_config().extraction
 
     # Check environment
     if not settings.openrouter_api_key:
@@ -66,7 +69,7 @@ def main():
         return 1
 
     print(f"✓ API Key: {settings.openrouter_api_key[:10]}...")
-    print(f"✓ Model: {settings.extraction_agent_model}")
+    print(f"✓ Model: {extraction_config.agent_model}")
     print()
 
     # Create test image
@@ -80,7 +83,7 @@ def main():
     try:
         agent = ExtractionAgent(
             api_key=settings.openrouter_api_key,
-            model_id=settings.extraction_agent_model,
+            model_id=extraction_config.agent_model,
             api_base="https://openrouter.ai/api/v1",
         )
         print("✓ Agent initialized")

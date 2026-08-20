@@ -18,7 +18,7 @@ A resource management system allowing users to upload, store, and process PDF do
 | Max file size | 75 MB |
 | Max files per user | 10 |
 
-> **Note:** These constraints should be added to the backend settings/config as hardcoded variables (similar to `ACCESS_TOKEN_EXPIRE_MINUTES`, `REFRESH_TOKEN_EXPIRE_DAYS`).
+> **Note:** These constraints are enforced from the version-controlled `backend/config/app.yaml` policy.
 
 ---
 

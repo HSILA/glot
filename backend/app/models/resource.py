@@ -8,7 +8,7 @@ Content hash (SHA-256) ensures deduplication at storage level.
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Column, Index, text
+from sqlalchemy import Boolean, Column, Index, text
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
@@ -46,6 +46,11 @@ class Resource(SQLModel, table=True):
             "is_public",
             postgresql_where=text("is_public = TRUE"),
         ),
+        Index(
+            "idx_resources_unconfirmed_uploaded_at",
+            "uploaded_at",
+            postgresql_where=text("upload_confirmed = FALSE"),
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)
@@ -65,6 +70,11 @@ class Resource(SQLModel, table=True):
     page_count: int | None = Field(
         default=None,
         description="Number of pages in PDF",
+    )
+    upload_confirmed: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, server_default=text("true"), nullable=False),
+        description="Whether server-side upload integrity validation completed",
     )
     file_name: str = Field(
         max_length=255,

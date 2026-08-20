@@ -34,9 +34,9 @@ class UserSettings(SQLModel, table=True):
         - desired_retention: Target recall probability (default: 0.9)
         - weights: Algorithm parameters (default: library defaults, 19 floats)
 
-    Global Settings (see app/core/__init__.py):
-        - maximum_interval_days: Max days between reviews (default: 365)
-        - enable_fuzz: Add randomness to intervals (default: True)
+    Global scheduling policy (see config/app.yaml):
+        - maximum_interval_days: Max days between reviews
+        - enable_fuzz: Add randomness to intervals
     """
 
     __tablename__ = "user_settings"

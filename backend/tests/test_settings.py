@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core import Settings
+from app.core.app_config import load_app_config
 
 REQUIRED_ENV = {
     "R2_ACCOUNT_ID": "test-account",
@@ -42,21 +43,25 @@ def test_settings_accept_valid_jwt_secret(monkeypatch):
     assert settings.jwt_secret == "super-secret-test-value"
 
 
-def test_database_pool_settings_defaults(monkeypatch):
+def test_settings_only_owns_database_use_null_pool(monkeypatch):
     _set_required_env(monkeypatch)
     monkeypatch.setenv("JWT_SECRET", "super-secret-test-value")
 
     settings = Settings(_env_file=None)
 
-    assert settings.database_pool_pre_ping is True
-    assert settings.database_pool_recycle == 1800
-    assert settings.database_pool_size == 10
-    assert settings.database_max_overflow == 20
-    assert settings.database_pool_timeout == 30.0
     assert settings.database_use_null_pool is False
 
+    moved_fields = {
+        "database_pool_pre_ping",
+        "database_pool_recycle",
+        "database_pool_size",
+        "database_max_overflow",
+        "database_pool_timeout",
+    }
+    assert moved_fields.isdisjoint(Settings.model_fields)
 
-def test_database_pool_settings_env_overrides(monkeypatch):
+
+def test_database_pool_yaml_values_cannot_be_overridden_by_env(monkeypatch):
     _set_required_env(monkeypatch)
     monkeypatch.setenv("JWT_SECRET", "super-secret-test-value")
     monkeypatch.setenv("DATABASE_POOL_PRE_PING", "false")
@@ -67,10 +72,11 @@ def test_database_pool_settings_env_overrides(monkeypatch):
     monkeypatch.setenv("DATABASE_USE_NULL_POOL", "true")
 
     settings = Settings(_env_file=None)
+    database_pool = load_app_config().database_pool
 
-    assert settings.database_pool_pre_ping is False
-    assert settings.database_pool_recycle == 600
-    assert settings.database_pool_size == 6
-    assert settings.database_max_overflow == 12
-    assert settings.database_pool_timeout == 9.5
+    assert database_pool.pre_ping is True
+    assert database_pool.recycle_seconds == 1800
+    assert database_pool.size == 10
+    assert database_pool.max_overflow == 20
+    assert database_pool.timeout_seconds == 30
     assert settings.database_use_null_pool is True

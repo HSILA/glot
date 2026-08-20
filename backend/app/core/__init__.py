@@ -28,30 +28,18 @@ class Settings(BaseSettings):
     database_url_sync: str = (
         "postgresql+psycopg2://postgres:postgres@localhost:5432/glot"
     )
-    database_pool_pre_ping: bool = True
-    database_pool_recycle: int = 1800
-    database_pool_size: int = 10
-    database_max_overflow: int = 20
-    database_pool_timeout: float = 30.0
     database_use_null_pool: bool = False
 
-    # Scheduling (global defaults)
-    maximum_interval_days: int = 365
-    enable_fuzz: bool = True
+    # Scheduling, auth token lifetimes, resource limits, extraction model,
+    # database pool tuning, and rate limits are NOT here: they live in
+    # config/app.yaml (see app.core.app_config) so there is one canonical
+    # source of truth with no environment overrides.
 
     # Authentication
     jwt_secret: str
-    jwt_algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    refresh_token_expire_days: int = 14
 
     # CORS
     cors_origins: list[str] = ["http://localhost:3000"]
-
-    # Resources constraints
-    resource_max_size_bytes: int = 75 * 1024 * 1024  # 75 MB
-    resource_max_files_per_user: int = 10
-    resource_allowed_types: list[str] = ["application/pdf"]
 
     # Cloudflare R2
     r2_account_id: str
@@ -64,8 +52,6 @@ class Settings(BaseSettings):
 
     # Extraction Agent
     openrouter_api_key: str
-    extraction_agent_model: str = "qwen/qwen-3-vl-235b-a22b-instruct"
-    extraction_worker_poll_delay_seconds: float = 15.0
 
     @field_validator("jwt_secret")
     @classmethod
@@ -75,7 +61,7 @@ class Settings(BaseSettings):
             raise ValueError("JWT_SECRET must not be blank")
         return value
 
-    @field_validator("cors_origins", "resource_allowed_types", mode="before")
+    @field_validator("cors_origins", mode="before")
     @classmethod
     def parse_json_list(cls, value):
         if isinstance(value, str):
@@ -87,12 +73,6 @@ class Settings(BaseSettings):
                 # Fallback: treat comma-separated string as list
                 return [item.strip() for item in value.split(",") if item.strip()]
         return value
-
-
-# Rate limiting
-RATE_LIMIT_LOGIN = "5/5minutes"
-RATE_LIMIT_REGISTER = "3/hour"
-RATE_LIMIT_REFRESH = "10/minute"
 
 
 @lru_cache

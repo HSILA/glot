@@ -23,12 +23,7 @@ from slowapi.util import get_remote_address
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.core import (
-    RATE_LIMIT_LOGIN,
-    RATE_LIMIT_REFRESH,
-    RATE_LIMIT_REGISTER,
-    get_settings,
-)
+from app.core.app_config import get_app_config
 from app.core.security import (
     create_access_token,
     generate_refresh_token,
@@ -61,7 +56,7 @@ def _set_auth_cookies(
     response: Response,
     access_token: str,
     refresh_token: str,
-    settings: object,
+    auth_config: object,
 ) -> None:
     """Set HttpOnly cookies for access and refresh tokens."""
     # Access token cookie
@@ -71,7 +66,7 @@ def _set_auth_cookies(
         httponly=True,
         secure=True,  # HTTPS only (set to False for local dev if needed)
         samesite="lax",
-        max_age=settings.access_token_expire_minutes * 60,
+        max_age=auth_config.access_token_expire_minutes * 60,
     )
 
     # Refresh token cookie (more restrictive)
@@ -81,7 +76,7 @@ def _set_auth_cookies(
         httponly=True,
         secure=True,
         samesite="strict",
-        max_age=settings.refresh_token_expire_days * 24 * 60 * 60,
+        max_age=auth_config.refresh_token_expire_days * 24 * 60 * 60,
         path="/api/v1/auth",  # Only sent to auth endpoints
     )
 
@@ -95,7 +90,7 @@ def _clear_auth_cookies(response: Response) -> None:
 @router.post(
     "/register", response_model=UserRegistered, status_code=status.HTTP_201_CREATED
 )
-@limiter.limit(RATE_LIMIT_REGISTER)
+@limiter.limit(get_app_config().rate_limits.register_limit)
 async def register(
     request: Request,
     user_data: UserRegister,
@@ -144,7 +139,7 @@ async def register(
 
 
 @router.post("/login", response_model=TokenResponse)
-@limiter.limit(RATE_LIMIT_LOGIN)
+@limiter.limit(get_app_config().rate_limits.login)
 async def login(
     request: Request,
     response: Response,
@@ -157,7 +152,7 @@ async def login(
     Sets HttpOnly cookies for both access and refresh tokens.
     Returns access token info in response body.
     """
-    settings = get_settings()
+    auth_config = get_app_config().auth
 
     # Find user by email
     result = await session.execute(
@@ -199,23 +194,23 @@ async def login(
         token_hash=hash_refresh_token(refresh_token),
         device_name=device_name,
         expires_at=datetime.now(UTC)
-        + timedelta(days=settings.refresh_token_expire_days),
+        + timedelta(days=auth_config.refresh_token_expire_days),
     )
     session.add(refresh_token_record)
 
     # Set cookies
-    _set_auth_cookies(response, access_token, refresh_token, settings)
+    _set_auth_cookies(response, access_token, refresh_token, auth_config)
 
     logger.info(f"User logged in: {user.email} from {device_name}")
 
     return TokenResponse(
         access_token=access_token,
-        expires_in=settings.access_token_expire_minutes * 60,
+        expires_in=auth_config.access_token_expire_minutes * 60,
     )
 
 
 @router.post("/refresh", response_model=TokenResponse)
-@limiter.limit(RATE_LIMIT_REFRESH)
+@limiter.limit(get_app_config().rate_limits.refresh)
 async def refresh_tokens(
     request: Request,
     response: Response,
@@ -232,7 +227,7 @@ async def refresh_tokens(
 
     As long as user keeps refreshing within 14 days, session never expires.
     """
-    settings = get_settings()
+    auth_config = get_app_config().auth
 
     if not refresh_token:
         raise HTTPException(
@@ -289,18 +284,18 @@ async def refresh_tokens(
         token_hash=hash_refresh_token(new_refresh_token),
         device_name=device_name,
         expires_at=datetime.now(UTC)
-        + timedelta(days=settings.refresh_token_expire_days),
+        + timedelta(days=auth_config.refresh_token_expire_days),
     )
     session.add(new_token_record)
 
     # Set new cookies
-    _set_auth_cookies(response, new_access_token, new_refresh_token, settings)
+    _set_auth_cookies(response, new_access_token, new_refresh_token, auth_config)
 
     logger.debug(f"Token refreshed for user {user.id}")
 
     return TokenResponse(
         access_token=new_access_token,
-        expires_in=settings.access_token_expire_minutes * 60,
+        expires_in=auth_config.access_token_expire_minutes * 60,
     )
 
 

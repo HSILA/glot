@@ -25,14 +25,15 @@ If you use Neon pooled endpoints (`...-pooler...`), the backend auto-detects thi
 
 ### Pool tuning knobs (non-pooler/direct DB mode)
 
-For direct database connections (no external pooler), SQLAlchemy pooling is explicitly tuned and configurable via env vars:
+For direct database connections, SQLAlchemy pool policy is version-controlled in `config/app.yaml`:
 
-```env
-DATABASE_POOL_PRE_PING=true
-DATABASE_POOL_RECYCLE=1800
-DATABASE_POOL_SIZE=10
-DATABASE_MAX_OVERFLOW=20
-DATABASE_POOL_TIMEOUT=30
+```yaml
+database_pool:
+  pre_ping: true
+  recycle_seconds: 1800
+  size: 10
+  max_overflow: 20
+  timeout_seconds: 30
 ```
 
 For external poolers (e.g., Supabase pooler URLs, Neon pooler URLs, port `6543`), backend auto-switches to `NullPool`.
@@ -63,6 +64,9 @@ Alembic is the canonical schema management tool.
 ### Common commands
 
 ```bash
+# Validate policy before applying schema changes
+uv run python -m app.core.app_config
+
 # Apply pending migrations
 uv run alembic upgrade head
 
@@ -75,6 +79,7 @@ uv run alembic downgrade -1
 
 ### Startup behavior
 
-- Docker backend startup command runs `alembic upgrade head` before `uvicorn`
+- Docker and `just dev-backend` validate `config/app.yaml` before migrations
+- Docker backend startup then runs `alembic upgrade head` before `uvicorn`
 - Local `just dev-backend` also runs migrations before API start
 - If migration fails, backend startup fails (expected/safe behavior)

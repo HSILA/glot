@@ -12,6 +12,7 @@ from .extraction_worker import (
     extract_page,
     prepare_extraction,
     recover_incomplete_extractions,
+    sweep_expired_uploads,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "check_stale_extractions",
     "check_orphan_resources",
     "recover_incomplete_extractions",
+    "sweep_expired_uploads",
 ]

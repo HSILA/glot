@@ -27,6 +27,7 @@ dependencies = [
     "smolagents[openai]>=1.23.0",
     "pymupdf>=1.26.7",
     "pillow>=12.0.0",
+    "pyyaml>=6.0.2",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"config/app.yaml" = "app/config/app.yaml"
 
 [tool.ruff]
 line-length = 88

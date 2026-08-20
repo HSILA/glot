@@ -13,8 +13,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from app.core import get_settings
+from app.core.app_config import get_app_config
 
 settings = get_settings()
+app_config = get_app_config()
 
 
 def _is_pooler_connection(database_url: str) -> bool:
@@ -50,11 +52,11 @@ def build_async_engine_config() -> dict:
 
     config.update(
         {
-            "pool_pre_ping": settings.database_pool_pre_ping,
-            "pool_recycle": settings.database_pool_recycle,
-            "pool_size": settings.database_pool_size,
-            "max_overflow": settings.database_max_overflow,
-            "pool_timeout": settings.database_pool_timeout,
+            "pool_pre_ping": app_config.database_pool.pre_ping,
+            "pool_recycle": app_config.database_pool.recycle_seconds,
+            "pool_size": app_config.database_pool.size,
+            "max_overflow": app_config.database_pool.max_overflow,
+            "pool_timeout": app_config.database_pool.timeout_seconds,
         }
     )
 
