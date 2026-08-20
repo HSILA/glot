@@ -11,7 +11,10 @@ from sqlalchemy.exc import IntegrityError
 from app.api.v1.resources import confirm_upload, request_upload, trigger_extraction
 from app.models import Resource, User, UserResource
 from app.schemas.resource import UploadRequest
-from app.services.storage_service import StorageObjectTooLargeError
+from app.services.storage_service import (
+    StorageObjectNotFoundError,
+    StorageObjectTooLargeError,
+)
 
 
 def make_pdf() -> bytes:
@@ -103,6 +106,7 @@ async def test_request_upload_presigns_the_validated_content_type():
         "uploads/1.pdf",
         folder=None,
         content_type="application/pdf",
+        expires_in=900,
     )
     created_resource = next(
         call.args[0]
@@ -151,6 +155,7 @@ async def test_owner_can_resume_an_unconfirmed_upload():
         "uploads/1.pdf",
         folder=None,
         content_type=request.content_type,
+        expires_in=900,
     )
     assert session.execute.await_count == 2
     session.flush.assert_awaited_once()
@@ -374,6 +379,41 @@ async def test_confirm_upload_rejects_oversized_object_before_reading():
         folder=None,
         max_bytes=resource.size_bytes,
     )
+    storage.async_delete_file.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_confirm_upload_rejects_missing_staged_object():
+    resource = Resource(
+        id=1,
+        content_hash="a" * 64,
+        size_bytes=100,
+        upload_confirmed=False,
+        file_name="document.pdf",
+        uploaded_by=1,
+    )
+    user_resource = UserResource(user_id=1, resource_id=1, name="Document")
+    user = User(id=1, email="user@example.com", password_hash="hash")
+    result = Mock()
+    result.scalar_one_or_none.return_value = user_resource
+    session = AsyncMock()
+    session.get.return_value = resource
+    session.execute.return_value = result
+    storage = Mock()
+    storage.async_download_file_bounded = AsyncMock(
+        side_effect=StorageObjectNotFoundError("missing uploads/1.pdf")
+    )
+    storage.async_delete_file = AsyncMock()
+
+    with pytest.raises(HTTPException, match="No file was uploaded") as exc:
+        await confirm_upload(
+            resource_id=1,
+            session=session,
+            current_user=user,
+            storage=storage,
+        )
+
+    assert exc.value.status_code == 400
     storage.async_delete_file.assert_awaited_once()
 
 

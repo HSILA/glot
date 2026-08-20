@@ -46,6 +46,11 @@ class Resource(SQLModel, table=True):
             "is_public",
             postgresql_where=text("is_public = TRUE"),
         ),
+        Index(
+            "idx_resources_unconfirmed_uploaded_at",
+            "uploaded_at",
+            postgresql_where=text("upload_confirmed = FALSE"),
+        ),
     )
 
     id: int | None = Field(default=None, primary_key=True)

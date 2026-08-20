@@ -35,6 +35,10 @@ from app.models import PageExtraction, PageStatus, Resource, UserResource
 from app.models.resource import ExtractionStatus
 from app.services import RedisService, StorageService
 
+# Bound how many abandoned upload reservations a single sweeper run reclaims,
+# so a large backlog never holds the row locks (or the startup) indefinitely.
+_SWEEP_BATCH_LIMIT = 200
+
 
 def _prepare_job_id(resource_id: int) -> str:
     """Deterministic ARQ job id for a resource's prepare job (dedupe signal)."""
@@ -713,12 +717,24 @@ async def recover_incomplete_extractions(ctx: dict):
 
 
 async def sweep_expired_uploads(ctx: dict):
-    """Delete abandoned uploads whose reservation expired long ago.
+    """Reclaim abandoned upload artifacts whose reservation expired long ago.
 
-    An upload whose file was never confirmed within the presigned-URL window
-    plus a grace period is unreachable: the URL is dead, ownership has lapsed,
-    and the staging object will never be promoted. Reclaim the staging object
-    and its DB rows so abandoned uploads cannot accumulate in storage.
+    Two kinds of garbage:
+
+    1. Never-confirmed uploads: the file was never uploaded, or was uploaded
+       but never confirmed, within the presigned-URL window plus a grace period.
+       These are unreachable (URL is dead, ownership has lapsed) so we delete
+       the staging object and the DB rows.
+
+    2. Staging objects left behind on confirmed resources: after a successful
+       confirm the staging key ``uploads/{id}.pdf`` is never used again, but a
+       transient delete failure at confirm time can leave it behind. These are
+       always safe to delete once the original URL window has fully passed.
+
+    The raw/ + thumbnail content-addressed objects are intentionally left alone
+    here: they are keyed by content hash and reused by any future upload of the
+    same content, so they are not pure garbage and require a reference-count
+    check before deletion (see orphan-cleanup follow-up).
 
     Runs once at worker startup (cronless - no periodic DB polling).
     """
@@ -732,6 +748,8 @@ async def sweep_expired_uploads(ctx: dict):
             cutoff = utc_now() - timedelta(
                 seconds=UPLOAD_URL_EXPIRES_SECONDS + grace
             )
+
+            # 1. Reclaim never-confirmed reservations.
             result = await session.execute(
                 select(Resource)
                 .where(
@@ -739,12 +757,9 @@ async def sweep_expired_uploads(ctx: dict):
                     Resource.uploaded_at < cutoff,
                 )
                 .with_for_update(skip_locked=True)
+                .limit(_SWEEP_BATCH_LIMIT)
             )
             expired = result.scalars().all()
-
-            if not expired:
-                logger.info("No expired upload reservations found")
-                return {"swept": 0}
 
             swept = 0
             for resource in expired:
@@ -776,8 +791,37 @@ async def sweep_expired_uploads(ctx: dict):
 
             if swept:
                 await session.commit()
-            logger.info(f"Swept {swept} expired upload reservations")
-            return {"swept": swept}
+
+            # 2. Best-effort clean leftover staging objects on confirmed
+            #    resources whose upload window fully elapsed. Staging is never
+            #    needed after confirmation, so this is always safe. No row
+            #    changes, hence no transaction work needed.
+            staging_cleaned = 0
+            clean_result = await session.execute(
+                select(Resource)
+                .where(
+                    Resource.upload_confirmed == True,  # noqa: E712
+                    Resource.uploaded_at < cutoff,
+                )
+                .limit(_SWEEP_BATCH_LIMIT)
+            )
+            for confirmed in clean_result.scalars().all():
+                try:
+                    await storage.async_delete_file(
+                        _staging_upload_key(confirmed.id),
+                        folder=None,
+                    )
+                    staging_cleaned += 1
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to clean confirmed staging {confirmed.id}: {e}"
+                    )
+
+            logger.info(
+                f"Swept {swept} expired reservations, "
+                f"cleaned {staging_cleaned} confirmed staging objects"
+            )
+            return {"swept": swept, "staging_cleaned": staging_cleaned}
         except Exception as e:
             logger.exception(f"Error sweeping expired uploads: {e}")
             return {"error": str(e)}

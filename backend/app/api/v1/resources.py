@@ -43,7 +43,10 @@ from app.schemas.resource import (
     UploadResponse,
 )
 from app.services import RedisService, StorageService
-from app.services.storage_service import StorageObjectTooLargeError
+from app.services.storage_service import (
+    StorageObjectNotFoundError,
+    StorageObjectTooLargeError,
+)
 
 router = APIRouter()
 
@@ -313,6 +316,7 @@ async def request_upload(
                 _staging_upload_key(existing_resource.id),
                 folder=None,
                 content_type=request.content_type,
+                expires_in=UPLOAD_URL_EXPIRES_SECONDS,
             )
             return UploadResponse(
                 upload_url=upload_url,
@@ -389,6 +393,7 @@ async def request_upload(
         _staging_upload_key(resource.id),
         folder=None,
         content_type=request.content_type,
+        expires_in=UPLOAD_URL_EXPIRES_SECONDS,
     )
 
     return UploadResponse(
@@ -493,6 +498,14 @@ async def confirm_upload(
             resource,
             user_resource,
             "Uploaded file exceeds the declared size",
+        )
+    except StorageObjectNotFoundError:
+        await _reject_upload(
+            session,
+            storage,
+            resource,
+            user_resource,
+            "No file was uploaded for this resource",
         )
 
     actual_size = len(pdf_bytes)

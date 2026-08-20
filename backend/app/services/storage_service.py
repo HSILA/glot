@@ -22,6 +22,11 @@ class StorageObjectTooLargeError(ValueError):
     """Raised before an object larger than the allowed bound is materialized."""
 
 
+class StorageObjectNotFoundError(Exception):
+    """Raised when a storage object that should exist (e.g. a staged upload)
+    is missing. Callers surface this as a normal 4xx rather than a 500."""
+
+
 class StorageService:
     """
     Cloudflare R2 storage operations.
@@ -209,6 +214,14 @@ class StorageService:
                     f"Object exceeds the {max_bytes}-byte limit"
                 )
             return payload
+        except StorageObjectTooLargeError:
+            raise
+        except self._client.exceptions.NoSuchKey as exc:
+            # A missing key is a normal "nothing staged here yet" condition, not
+            # an infrastructure failure. Let callers return a clean 4xx.
+            raise StorageObjectNotFoundError(
+                f"Storage object not found: {key}"
+            ) from exc
         finally:
             body.close()
 

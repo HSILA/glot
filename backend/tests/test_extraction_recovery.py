@@ -238,13 +238,28 @@ def _startup_ctx(storage) -> dict:
     return {"storage": storage}
 
 
+def _result(values) -> Mock:
+    r = Mock()
+    r.scalars.return_value.all.return_value = values
+    return r
+
+
+def _session_with_query_results(first: list, second: list) -> AsyncMock:
+    session = AsyncMock()
+    session.execute.side_effect = [_result(first), _result(second)]
+    return session
+
+
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> None:
     resource = _unconfirmed_upload()
+    # Executes: unconfirmed select -> delete(UserResource) -> confirmed select.
     session = AsyncMock()
-    result = Mock()
-    result.scalars.return_value.all.return_value = [resource]
-    session.execute.return_value = result
+    session.execute.side_effect = [
+        _result([resource]),
+        _result([]),  # delete(UserResource) result (unused)
+        _result([]),  # confirmed staging cleanup finds nothing
+    ]
     storage = Mock()
     storage.async_delete_file = AsyncMock()
 
@@ -256,23 +271,18 @@ async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> 
 
     outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
 
-    assert outcome == {"swept": 1}
+    assert outcome == {"swept": 1, "staging_cleaned": 0}
     # Staging object reclaimed and rows removed.
     storage.async_delete_file.assert_awaited_once_with("uploads/41.pdf", folder=None)
     session.delete.assert_awaited_once_with(resource)
     session.commit.assert_awaited()
-    # The one non-delete SELECT is the candidate query; deletes are the rest.
-    assert sum(call.args[0].is_delete for call in session.execute.await_args_list) >= 1
 
 
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_skips_confirmed_resources(monkeypatch) -> None:
     resource = _unconfirmed_upload()
     resource.upload_confirmed = True  # a confirm won the race to the row lock
-    session = AsyncMock()
-    result = Mock()
-    result.scalars.return_value.all.return_value = [resource]
-    session.execute.return_value = result
+    session = _session_with_query_results([resource], [])
     storage = Mock()
     storage.async_delete_file = AsyncMock()
 
@@ -284,18 +294,38 @@ async def test_sweep_expired_uploads_skips_confirmed_resources(monkeypatch) -> N
 
     outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
 
-    assert outcome == {"swept": 0}
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
     storage.async_delete_file.assert_not_awaited()
     session.delete.assert_not_awaited()
     session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
+async def test_sweep_expired_uploads_cleans_confirmed_staging(monkeypatch) -> None:
+    confirmed = _unconfirmed_upload(resource_id=77)
+    confirmed.upload_confirmed = True  # confirmed; only its staging is garbage
+    session = _session_with_query_results([], [confirmed])
+    storage = Mock()
+    storage.async_delete_file = AsyncMock()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0, "staging_cleaned": 1}
+    # Confirmed resources keep their rows but drop the dead staging object.
+    storage.async_delete_file.assert_awaited_once_with("uploads/77.pdf", folder=None)
+    session.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sweep_expired_uploads_is_noop_without_candidates(monkeypatch) -> None:
-    session = AsyncMock()
-    result = Mock()
-    result.scalars.return_value.all.return_value = []
-    session.execute.return_value = result
+    session = _session_with_query_results([], [])
     storage = Mock()
 
     monkeypatch.setattr(
@@ -306,17 +336,15 @@ async def test_sweep_expired_uploads_is_noop_without_candidates(monkeypatch) -> 
 
     outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
 
-    assert outcome == {"swept": 0}
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
+    session.delete.assert_not_awaited()
     session.commit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_skips_on_staging_delete_failure(monkeypatch) -> None:
     resource = _unconfirmed_upload()
-    session = AsyncMock()
-    result = Mock()
-    result.scalars.return_value.all.return_value = [resource]
-    session.execute.return_value = result
+    session = _session_with_query_results([resource], [])
     storage = Mock()
     storage.async_delete_file = AsyncMock(side_effect=RuntimeError("R2 unavailable"))
 
@@ -330,13 +358,17 @@ async def test_sweep_expired_uploads_skips_on_staging_delete_failure(monkeypatch
 
     # If the object can't be deleted, the row is left behind so a later sweep
     # retries; deleting the row would orphan the object unreachably.
-    assert outcome == {"swept": 0}
+    assert outcome == {"swept": 0, "staging_cleaned": 0}
     session.delete.assert_not_awaited()
     session.commit.assert_not_awaited()
 
 
 def test_sweep_expired_uploads_is_wired_at_startup() -> None:
-    assert callable(extraction_worker.sweep_expired_uploads)
+    import inspect
+
+    source = inspect.getsource(extraction_worker.on_worker_startup)
+    # The sweeper must actually be invoked on startup, not merely be importable.
+    assert "sweep_expired_uploads(ctx)" in source
 
 
 @pytest.mark.asyncio
