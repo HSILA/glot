@@ -2,7 +2,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from app.services.storage_service import StorageObjectTooLargeError, StorageService
+from app.services.storage_service import (
+    StorageObjectNotFoundError,
+    StorageObjectTooLargeError,
+    StorageService,
+)
 
 
 def _build_storage_service() -> tuple[StorageService, Mock]:
@@ -14,6 +18,53 @@ def _build_storage_service() -> tuple[StorageService, Mock]:
     service._client = client
 
     return service, client
+
+
+class _NoSuchKeyError(Exception):
+    """Minimal stand-in for the botocore NoSuchKey exception shape."""
+
+
+class _Client404Error(Exception):
+    """Minimal stand-in for a botocore ClientError with HTTP 404."""
+
+    def __init__(self):
+        super().__init__("not found")
+        self.response = {"ResponseMetadata": {"HTTPStatusCode": 404}}
+
+
+def test_bounded_download_missing_key_raises_not_found() -> None:
+    service, client = _build_storage_service()
+    client.exceptions.NoSuchKey = _NoSuchKeyError
+    client.get_object.side_effect = _NoSuchKeyError("missing")
+
+    with pytest.raises(StorageObjectNotFoundError):
+        service.download_file_bounded("uploads/7.pdf", max_bytes=10, folder=None)
+
+
+def test_bounded_download_404_client_error_raises_not_found() -> None:
+    service, client = _build_storage_service()
+    # R2 may surface a generic ClientError with HTTP 404 rather than NoSuchKey.
+    client.exceptions.NoSuchKey = _NoSuchKeyError
+    client.exceptions.ClientError = _Client404Error
+    client.get_object.side_effect = _Client404Error()
+
+    with pytest.raises(StorageObjectNotFoundError):
+        service.download_file_bounded("uploads/7.pdf", max_bytes=10, folder=None)
+
+
+def test_bounded_download_non_404_error_propagates() -> None:
+    service, client = _build_storage_service()
+
+    class _Client500Error(_Client404Error):
+        def __init__(self):
+            self.response = {"ResponseMetadata": {"HTTPStatusCode": 500}}
+
+    client.exceptions.NoSuchKey = _NoSuchKeyError
+    client.exceptions.ClientError = _Client500Error
+    client.get_object.side_effect = _Client500Error()
+
+    with pytest.raises(_Client500Error):
+        service.download_file_bounded("uploads/7.pdf", max_bytes=10, folder=None)
 
 
 def test_generate_download_url_uses_hash_filename_for_raw_downloads() -> None:

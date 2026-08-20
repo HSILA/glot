@@ -199,7 +199,23 @@ class StorageService:
         else:
             key = f"{folder}/{key_or_hash}"
 
-        response = self._client.get_object(Bucket=self._bucket_name, Key=key)
+        try:
+            response = self._client.get_object(Bucket=self._bucket_name, Key=key)
+        except self._client.exceptions.NoSuchKey as exc:
+            # A missing key is a normal "nothing staged here yet" condition, not
+            # an infrastructure failure. Let callers return a clean 4xx.
+            raise StorageObjectNotFoundError(
+                f"Storage object not found: {key}"
+            ) from exc
+        except self._client.exceptions.ClientError as exc:
+            # R2 does not always surface NoSuchKey; treat any 404-shaped
+            # response as "object absent".
+            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+                raise StorageObjectNotFoundError(
+                    f"Storage object not found: {key}"
+                ) from exc
+            raise
+
         body = response["Body"]
         try:
             content_length = response.get("ContentLength")
@@ -214,14 +230,6 @@ class StorageService:
                     f"Object exceeds the {max_bytes}-byte limit"
                 )
             return payload
-        except StorageObjectTooLargeError:
-            raise
-        except self._client.exceptions.NoSuchKey as exc:
-            # A missing key is a normal "nothing staged here yet" condition, not
-            # an infrastructure failure. Let callers return a clean 4xx.
-            raise StorageObjectNotFoundError(
-                f"Storage object not found: {key}"
-            ) from exc
         finally:
             body.close()
 
@@ -329,6 +337,28 @@ class StorageService:
         )
         return response.get("KeyCount", 0) > 0
 
+    def list_object_keys(self, prefix: str, limit: int = 200) -> list[str]:
+        """Return up to ``limit`` object keys under ``prefix`` (pagination-aware).
+
+        Used to drive storage-side cleanup by enumerating what actually exists,
+        so a sweeper makes progress regardless of DB row ordering.
+        """
+        if not prefix.endswith("/"):
+            prefix = prefix + "/"
+        keys: list[str] = []
+        kwargs = {"Bucket": self._bucket_name, "Prefix": prefix}
+        while len(keys) < limit:
+            resp = self._client.list_objects_v2(MaxKeys=limit, **kwargs)
+            keys.extend(
+                obj["Key"]
+                for obj in resp.get("Contents", [])
+                if obj.get("Key")
+            )
+            if not resp.get("IsTruncated"):
+                break
+            kwargs["ContinuationToken"] = resp.get("NextContinuationToken")
+        return keys[:limit]
+
     # Async wrappers for network-bound boto3 operations.
     # These keep async API/worker paths from blocking the event loop.
     async def async_upload_file(
@@ -391,6 +421,9 @@ class StorageService:
 
     async def async_folder_exists(self, prefix: str) -> bool:
         return await asyncio.to_thread(self.folder_exists, prefix)
+
+    async def async_list_object_keys(self, prefix: str, limit: int = 200) -> list[str]:
+        return await asyncio.to_thread(self.list_object_keys, prefix, limit)
 
     async def async_upload_thumbnail(self, image_bytes: bytes, content_hash: str) -> None:
         await asyncio.to_thread(self.upload_thumbnail, image_bytes, content_hash)

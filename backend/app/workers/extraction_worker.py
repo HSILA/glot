@@ -39,6 +39,22 @@ from app.services import RedisService, StorageService
 # so a large backlog never holds the row locks (or the startup) indefinitely.
 _SWEEP_BATCH_LIMIT = 200
 
+# Storage prefix holding per-resource staging objects (uploads/{id}.pdf).
+_STAGING_PREFIX = "uploads"
+
+
+def _staging_key_resource_id(key: str) -> int | None:
+    """Extract the resource id from a staging key like ``uploads/7.pdf``."""
+    if not key.startswith(_STAGING_PREFIX + "/"):
+        return None
+    stem = key[len(_STAGING_PREFIX) + 1 :]
+    if not stem.endswith(".pdf"):
+        return None
+    try:
+        return int(stem[: -len(".pdf")])
+    except ValueError:
+        return None
+
 
 def _prepare_job_id(resource_id: int) -> str:
     """Deterministic ARQ job id for a resource's prepare job (dedupe signal)."""
@@ -734,7 +750,7 @@ async def sweep_expired_uploads(ctx: dict):
     The raw/ + thumbnail content-addressed objects are intentionally left alone
     here: they are keyed by content hash and reused by any future upload of the
     same content, so they are not pure garbage and require a reference-count
-    check before deletion (see orphan-cleanup follow-up).
+    check before deletion (tracked as a follow-up).
 
     Runs once at worker startup (cronless - no periodic DB polling).
     """
@@ -749,7 +765,9 @@ async def sweep_expired_uploads(ctx: dict):
                 seconds=UPLOAD_URL_EXPIRES_SECONDS + grace
             )
 
-            # 1. Reclaim never-confirmed reservations.
+            # 1. Reclaim never-confirmed reservations. Commit (even when nothing
+            #    was swept) so the FOR UPDATE locks are released before any R2
+            #    network I/O below.
             result = await session.execute(
                 select(Resource)
                 .where(
@@ -789,37 +807,41 @@ async def sweep_expired_uploads(ctx: dict):
                 swept += 1
                 logger.info(f"Swept expired upload reservation {resource.id}")
 
-            if swept:
-                await session.commit()
+            await session.commit()
 
-            # 2. Best-effort clean leftover staging objects on confirmed
-            #    resources whose upload window fully elapsed. Staging is never
-            #    needed after confirmation, so this is always safe. No row
-            #    changes, hence no transaction work needed.
+            # 2. Clean leftover staging objects on CONFIRMED resources by
+            #    enumerating what actually exists in storage (the source of
+            #    truth), so we make progress and only count real deletions.
             staging_cleaned = 0
-            clean_result = await session.execute(
-                select(Resource)
-                .where(
-                    Resource.upload_confirmed == True,  # noqa: E712
-                    Resource.uploaded_at < cutoff,
+            try:
+                keys = await storage.async_list_object_keys(
+                    _STAGING_PREFIX, limit=_SWEEP_BATCH_LIMIT
                 )
-                .limit(_SWEEP_BATCH_LIMIT)
-            )
-            for confirmed in clean_result.scalars().all():
-                try:
-                    await storage.async_delete_file(
-                        _staging_upload_key(confirmed.id),
-                        folder=None,
-                    )
-                    staging_cleaned += 1
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to clean confirmed staging {confirmed.id}: {e}"
-                    )
+            except Exception as e:
+                logger.warning(f"Failed to list staging objects: {e}")
+                keys = []
+
+            for key in keys:
+                resource_id = _staging_key_resource_id(key)
+                if resource_id is None:
+                    continue
+                row = await session.get(Resource, resource_id)
+                # Safe to delete staging when the row is gone (orphan) or the
+                # resource is confirmed (staging is never needed again) and old.
+                if row is None or (
+                    row.upload_confirmed and row.uploaded_at < cutoff
+                ):
+                    try:
+                        await storage.async_delete_file(key, folder=None)
+                        staging_cleaned += 1
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to clean staging {key}: {e}"
+                        )
 
             logger.info(
                 f"Swept {swept} expired reservations, "
-                f"cleaned {staging_cleaned} confirmed staging objects"
+                f"cleaned {staging_cleaned} leftover staging objects"
             )
             return {"swept": swept, "staging_cleaned": staging_cleaned}
         except Exception as e:
