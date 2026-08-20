@@ -13,6 +13,9 @@ auth:
 resources:
   max_size_bytes: 78643200
   max_files_per_user: 10
+  # How long an unconfirmed upload may outlive its 15-minute presigned URL
+  # before the startup sweeper reclaims it.
+  abandoned_upload_grace_seconds: 3600
   allowed_types:
     - application/pdf
 

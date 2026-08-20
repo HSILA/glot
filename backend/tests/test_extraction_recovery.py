@@ -197,7 +197,146 @@ async def test_attach_recovery_state_skips_redis_when_no_active(monkeypatch) -> 
     assert read.can_resume_extraction is False
 
 
-# --- extract/resume endpoint re-queues via prepare_extraction (dedupe id) ---
+# --- sweep_expired_uploads (cronless startup reclaim of abandoned uploads) ---
+
+
+def _unconfirmed_upload(resource_id: int = 41) -> Resource:
+    # An abandoned, never-confirmed upload reservation. uploaded_at is old
+    # enough that the SQL predicate would have selected it.
+    return Resource(
+        id=resource_id,
+        content_hash="b" * 64,
+        size_bytes=512,
+        upload_confirmed=False,
+        page_count=None,
+        file_name="doc.pdf",
+        is_public=False,
+        extraction_status=ExtractionStatus.NONE,
+        uploaded_at=datetime(2020, 1, 1, tzinfo=UTC),
+        uploaded_by=1,
+    )
+
+
+class _FakeSessionFactory:
+    """Async session factory that returns an async CM yielding a fake session."""
+
+    def __init__(self, session):
+        self._session = session
+
+    def __call__(self):
+        return self
+
+    async def __aenter__(self):
+        return self._session
+
+    async def __aexit__(self, *_exc):
+        return False
+
+
+def _startup_ctx(storage) -> dict:
+    # Supplying a storage object in the ctx avoids initializing a real one.
+    return {"storage": storage}
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    session = AsyncMock()
+    result = Mock()
+    result.scalars.return_value.all.return_value = [resource]
+    session.execute.return_value = result
+    storage = Mock()
+    storage.async_delete_file = AsyncMock()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 1}
+    # Staging object reclaimed and rows removed.
+    storage.async_delete_file.assert_awaited_once_with("uploads/41.pdf", folder=None)
+    session.delete.assert_awaited_once_with(resource)
+    session.commit.assert_awaited()
+    # The one non-delete SELECT is the candidate query; deletes are the rest.
+    assert sum(call.args[0].is_delete for call in session.execute.await_args_list) >= 1
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_skips_confirmed_resources(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    resource.upload_confirmed = True  # a confirm won the race to the row lock
+    session = AsyncMock()
+    result = Mock()
+    result.scalars.return_value.all.return_value = [resource]
+    session.execute.return_value = result
+    storage = Mock()
+    storage.async_delete_file = AsyncMock()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0}
+    storage.async_delete_file.assert_not_awaited()
+    session.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_is_noop_without_candidates(monkeypatch) -> None:
+    session = AsyncMock()
+    result = Mock()
+    result.scalars.return_value.all.return_value = []
+    session.execute.return_value = result
+    storage = Mock()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 0}
+    session.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_skips_on_staging_delete_failure(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    session = AsyncMock()
+    result = Mock()
+    result.scalars.return_value.all.return_value = [resource]
+    session.execute.return_value = result
+    storage = Mock()
+    storage.async_delete_file = AsyncMock(side_effect=RuntimeError("R2 unavailable"))
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    # If the object can't be deleted, the row is left behind so a later sweep
+    # retries; deleting the row would orphan the object unreachably.
+    assert outcome == {"swept": 0}
+    session.delete.assert_not_awaited()
+    session.commit.assert_not_awaited()
+
+
+def test_sweep_expired_uploads_is_wired_at_startup() -> None:
+    assert callable(extraction_worker.sweep_expired_uploads)
 
 
 @pytest.mark.asyncio

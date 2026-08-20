@@ -7,6 +7,7 @@ Architecture:
 - check_stale_extractions: Re-queue stuck pages (run at worker startup)
 - check_orphan_resources: Fix resources stuck in PROCESSING (run at worker startup)
 - recover_incomplete_extractions: Startup recovery for incomplete processing resources
+- sweep_expired_uploads: Reclaim abandoned, never-confirmed uploads (run at worker startup)
 
 Recovery is cronless: there is no periodic DB polling. Recovery runs once at
 worker startup, and otherwise on-demand when the frontend resumes a resource
@@ -22,14 +23,15 @@ from datetime import timedelta
 import fitz  # PyMuPDF
 from loguru import logger
 from PIL import Image
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from app.agents import ExtractionAgent
+from app.api.v1.resources import UPLOAD_URL_EXPIRES_SECONDS, _staging_upload_key
 from app.core import get_settings
 from app.core.app_config import get_app_config
 from app.core.datetime_utils import utc_now
 from app.db import async_session_factory
-from app.models import PageExtraction, PageStatus, Resource
+from app.models import PageExtraction, PageStatus, Resource, UserResource
 from app.models.resource import ExtractionStatus
 from app.services import RedisService, StorageService
 
@@ -710,6 +712,77 @@ async def recover_incomplete_extractions(ctx: dict):
             return {"error": str(e)}
 
 
+async def sweep_expired_uploads(ctx: dict):
+    """Delete abandoned uploads whose reservation expired long ago.
+
+    An upload whose file was never confirmed within the presigned-URL window
+    plus a grace period is unreachable: the URL is dead, ownership has lapsed,
+    and the staging object will never be promoted. Reclaim the staging object
+    and its DB rows so abandoned uploads cannot accumulate in storage.
+
+    Runs once at worker startup (cronless - no periodic DB polling).
+    """
+    storage = _get_or_init_storage(ctx)
+
+    logger.info("Sweeping expired upload reservations...")
+
+    async with async_session_factory() as session:
+        try:
+            grace = get_app_config().resources.abandoned_upload_grace_seconds
+            cutoff = utc_now() - timedelta(
+                seconds=UPLOAD_URL_EXPIRES_SECONDS + grace
+            )
+            result = await session.execute(
+                select(Resource)
+                .where(
+                    Resource.upload_confirmed == False,  # noqa: E712
+                    Resource.uploaded_at < cutoff,
+                )
+                .with_for_update(skip_locked=True)
+            )
+            expired = result.scalars().all()
+
+            if not expired:
+                logger.info("No expired upload reservations found")
+                return {"swept": 0}
+
+            swept = 0
+            for resource in expired:
+                # A confirm starting just before us holds the row lock, so it
+                # is skipped here; re-check to avoid racing on the refreshed row.
+                if resource.upload_confirmed:
+                    continue
+                try:
+                    await storage.async_delete_file(
+                        _staging_upload_key(resource.id),
+                        folder=None,
+                    )
+                except Exception as e:
+                    # Leave the row so a later sweep retries the object; deleting
+                    # the row now would orphan the object unreachably in storage.
+                    logger.warning(
+                        f"Skipping expired upload {resource.id}: "
+                        f"staging delete failed: {e}"
+                    )
+                    continue
+                await session.execute(
+                    delete(UserResource).where(
+                        UserResource.resource_id == resource.id
+                    )
+                )
+                await session.delete(resource)
+                swept += 1
+                logger.info(f"Swept expired upload reservation {resource.id}")
+
+            if swept:
+                await session.commit()
+            logger.info(f"Swept {swept} expired upload reservations")
+            return {"swept": swept}
+        except Exception as e:
+            logger.exception(f"Error sweeping expired uploads: {e}")
+            return {"error": str(e)}
+
+
 async def on_worker_startup(ctx: dict):
     """Initialize shared worker services and run recovery checks."""
     logger.info("Worker startup: initializing shared services...")
@@ -729,6 +802,9 @@ async def on_worker_startup(ctx: dict):
 
     incomplete_result = await recover_incomplete_extractions(ctx)
     logger.info(f"Incomplete extractions check: {incomplete_result}")
+
+    upload_result = await sweep_expired_uploads(ctx)
+    logger.info(f"Expired upload sweep: {upload_result}")
 
     logger.info("Worker startup recovery complete")
 

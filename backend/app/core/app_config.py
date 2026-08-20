@@ -99,6 +99,7 @@ class ResourcesSection(BaseModel):
 
     max_size_bytes: StrictInt = Field(ge=1)
     max_files_per_user: StrictInt = Field(ge=1)
+    abandoned_upload_grace_seconds: StrictInt = Field(ge=0)
     allowed_types: list[StrictStr] = Field(min_length=1)
 
     @field_validator("allowed_types")

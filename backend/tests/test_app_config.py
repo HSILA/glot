@@ -39,6 +39,7 @@ VALID_CONFIG: dict = {
     "resources": {
         "max_size_bytes": 78643200,
         "max_files_per_user": 10,
+        "abandoned_upload_grace_seconds": 3600,
         "allowed_types": ["application/pdf"],
     },
     "extraction": {
@@ -104,6 +105,7 @@ def test_committed_resources_section():
 
     assert config.resources.max_size_bytes == 78643200
     assert config.resources.max_files_per_user == 10
+    assert config.resources.abandoned_upload_grace_seconds == 3600
     assert config.resources.allowed_types == ["application/pdf"]
 
 
