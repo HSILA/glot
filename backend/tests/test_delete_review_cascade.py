@@ -18,7 +18,7 @@ def test_review_log_card_fk_cascades_on_delete() -> None:
     table = ReviewLog.__table__
     fk = next(
         fk for fk in table.foreign_key_constraints
-        if list(fk.columns) == [table.c.card_id]
+        if [c.name for c in fk.columns] == ["card_id"]
     )
 
     assert fk.referred_table.name == "cards"
