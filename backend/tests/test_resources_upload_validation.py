@@ -100,7 +100,8 @@ async def test_request_upload_presigns_the_validated_content_type():
     )
 
     storage.generate_upload_url.assert_called_once_with(
-        request.content_hash,
+        "uploads/1.pdf",
+        folder=None,
         content_type="application/pdf",
     )
     created_resource = next(
@@ -147,7 +148,8 @@ async def test_owner_can_resume_an_unconfirmed_upload():
     assert response.upload_url == "https://upload.example"
     assert pending.uploaded_at > previous_expiry_base
     storage.generate_upload_url.assert_called_once_with(
-        request.content_hash,
+        "uploads/1.pdf",
+        folder=None,
         content_type=request.content_type,
     )
     assert session.execute.await_count == 2
@@ -235,8 +237,8 @@ async def test_other_user_can_take_over_expired_upload_reservation():
     assert pending.is_public is request.is_public
     assert pending.upload_confirmed is False
     storage.async_delete_file.assert_awaited_once_with(
-        request.content_hash,
-        folder="raw",
+        "uploads/1.pdf",
+        folder=None,
     )
     added_link = session.add.call_args.args[0]
     assert isinstance(added_link, UserResource)
@@ -302,6 +304,7 @@ async def test_confirm_upload_rejects_invalid_pdf_and_cleans_up():
         id=1,
         content_hash=hashlib.sha256(invalid).hexdigest(),
         size_bytes=len(invalid),
+        upload_confirmed=False,
         file_name="document.pdf",
         uploaded_by=1,
     )
@@ -327,8 +330,8 @@ async def test_confirm_upload_rejects_invalid_pdf_and_cleans_up():
 
     assert exc.value.status_code == 400
     storage.async_delete_file.assert_awaited_once_with(
-        resource.content_hash,
-        folder="raw",
+        "uploads/1.pdf",
+        folder=None,
     )
     session.delete.assert_any_await(user_resource)
     session.delete.assert_any_await(resource)
@@ -367,8 +370,8 @@ async def test_confirm_upload_rejects_oversized_object_before_reading():
 
     assert exc.value.status_code == 400
     storage.async_download_file_bounded.assert_awaited_once_with(
-        resource.content_hash,
-        folder="raw",
+        "uploads/1.pdf",
+        folder=None,
         max_bytes=resource.size_bytes,
     )
     storage.async_delete_file.assert_awaited_once()
@@ -386,6 +389,7 @@ async def test_confirm_upload_rejects_content_identity_mismatch(mismatch):
         id=1,
         content_hash=expected_hash,
         size_bytes=expected_size,
+        upload_confirmed=False,
         file_name="document.pdf",
         uploaded_by=1,
     )
@@ -434,6 +438,7 @@ async def test_confirm_upload_accepts_matching_valid_pdf():
     storage = Mock()
     storage.async_download_file_bounded = AsyncMock(return_value=payload)
     storage.async_file_exists = AsyncMock(return_value=True)
+    storage.async_upload_file = AsyncMock()
     storage.async_delete_file = AsyncMock()
 
     response = await confirm_upload(
@@ -446,9 +451,44 @@ async def test_confirm_upload_accepts_matching_valid_pdf():
     assert resource.page_count == 1
     assert resource.upload_confirmed is True
     assert response.page_count == 1
-    storage.async_delete_file.assert_not_awaited()
+    storage.async_upload_file.assert_awaited_once_with(
+        payload,
+        resource.content_hash,
+        folder="raw",
+        content_type="application/pdf",
+    )
+    storage.async_delete_file.assert_awaited_once_with(
+        "uploads/1.pdf",
+        folder=None,
+    )
     session.delete.assert_not_awaited()
     session.get.assert_awaited_once_with(Resource, 1, with_for_update=True)
+
+
+@pytest.mark.asyncio
+async def test_confirmed_upload_cannot_be_promoted_again():
+    resource = Resource(
+        id=1,
+        content_hash="a" * 64,
+        size_bytes=100,
+        upload_confirmed=True,
+        file_name="document.pdf",
+        uploaded_by=1,
+    )
+    session = AsyncMock()
+    session.get.return_value = resource
+    storage = Mock()
+
+    with pytest.raises(HTTPException, match="already confirmed") as exc:
+        await confirm_upload(
+            resource_id=1,
+            session=session,
+            current_user=User(id=1, email="user@example.com", password_hash="hash"),
+            storage=storage,
+        )
+
+    assert exc.value.status_code == 409
+    storage.async_download_file_bounded.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -486,6 +526,7 @@ async def test_invalid_upload_db_cleanup_survives_storage_delete_failure():
         id=1,
         content_hash=hashlib.sha256(invalid).hexdigest(),
         size_bytes=len(invalid),
+        upload_confirmed=False,
         file_name="document.pdf",
         uploaded_by=1,
     )
@@ -520,6 +561,7 @@ async def test_thumbnail_storage_failure_does_not_reject_valid_pdf():
         id=1,
         content_hash=hashlib.sha256(payload).hexdigest(),
         size_bytes=len(payload),
+        upload_confirmed=False,
         file_name="document.pdf",
         uploaded_by=1,
     )
@@ -533,6 +575,8 @@ async def test_thumbnail_storage_failure_does_not_reject_valid_pdf():
     storage = Mock()
     storage.async_download_file_bounded = AsyncMock(return_value=payload)
     storage.async_file_exists = AsyncMock(side_effect=RuntimeError("R2 unavailable"))
+    storage.async_upload_file = AsyncMock()
+    storage.async_delete_file = AsyncMock()
 
     response = await confirm_upload(
         resource_id=1,

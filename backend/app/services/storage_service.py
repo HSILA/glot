@@ -46,22 +46,19 @@ class StorageService:
 
     def generate_upload_url(
         self,
-        content_hash: str,
+        key_or_hash: str,
         content_type: str = "application/pdf",
-        expires_in: int = 900,  # 15 minutes
+        expires_in: int = 900,
+        folder: str | None = "raw",
     ) -> str:
-        """
-        Generate a presigned URL for direct upload to R2.
+        """Generate a presigned direct-upload URL."""
+        if folder is None:
+            key = key_or_hash
+        elif folder == "raw":
+            key = f"raw/{key_or_hash}.pdf"
+        else:
+            key = f"{folder}/{key_or_hash}"
 
-        Args:
-            content_hash: SHA-256 hash (used as filename)
-            content_type: MIME type of the file
-            expires_in: URL expiration in seconds
-
-        Returns:
-            Presigned URL for PUT request
-        """
-        key = f"raw/{content_hash}.pdf"
         return self._client.generate_presigned_url(
             "put_object",
             Params={

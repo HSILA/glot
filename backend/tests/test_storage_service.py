@@ -33,6 +33,27 @@ def test_generate_download_url_uses_hash_filename_for_raw_downloads() -> None:
     )
 
 
+def test_generate_upload_url_can_target_staging_key() -> None:
+    service, client = _build_storage_service()
+
+    url = service.generate_upload_url(
+        "uploads/7.pdf",
+        folder=None,
+        content_type="application/pdf",
+    )
+
+    assert url == "https://example.com/download"
+    client.generate_presigned_url.assert_called_once_with(
+        "put_object",
+        Params={
+            "Bucket": "test-bucket",
+            "Key": "uploads/7.pdf",
+            "ContentType": "application/pdf",
+        },
+        ExpiresIn=900,
+    )
+
+
 def test_generate_download_url_thumbnail_has_no_content_disposition() -> None:
     service, client = _build_storage_service()
 

@@ -169,6 +169,12 @@ def _upload_reservation_expired(resource: Resource) -> bool:
     )
 
 
+def _staging_upload_key(resource_id: int | None) -> str:
+    if resource_id is None:
+        raise RuntimeError("Upload resource must have a persisted ID")
+    return f"uploads/{resource_id}.pdf"
+
+
 async def _enforce_resource_capacity(
     session: AsyncSession,
     user_id: int | None,
@@ -259,8 +265,8 @@ async def request_upload(
                 )
                 try:
                     await storage.async_delete_file(
-                        existing_resource.content_hash,
-                        folder="raw",
+                        _staging_upload_key(existing_resource.id),
+                        folder=None,
                     )
                 except Exception as exc:
                     logging.warning(
@@ -304,7 +310,8 @@ async def request_upload(
             await session.flush()
 
             upload_url = storage.generate_upload_url(
-                request.content_hash,
+                _staging_upload_key(existing_resource.id),
+                folder=None,
                 content_type=request.content_type,
             )
             return UploadResponse(
@@ -376,9 +383,11 @@ async def request_upload(
     session.add(user_resource)
     await session.flush()
 
-    # Generate presigned URL using real content hash and validated content type
+    # Clients write only to a per-resource staging key. Confirmed bytes are
+    # promoted by the backend to the immutable content-addressed raw key.
     upload_url = storage.generate_upload_url(
-        request.content_hash,
+        _staging_upload_key(resource.id),
+        folder=None,
         content_type=request.content_type,
     )
 
@@ -396,9 +405,12 @@ async def _reject_upload(
     user_resource: UserResource,
     detail: str,
 ) -> NoReturn:
-    """Delete the pending raw object and DB rows for a failed upload confirmation."""
+    """Delete staging content and database rows for a rejected upload."""
     try:
-        await storage.async_delete_file(resource.content_hash, folder="raw")
+        await storage.async_delete_file(
+            _staging_upload_key(resource.id),
+            folder=None,
+        )
     except Exception as exc:
         logging.warning(
             "Failed to delete rejected raw upload %s: %s",
@@ -445,6 +457,12 @@ async def confirm_upload(
             detail="Not authorized",
         )
 
+    if resource.upload_confirmed:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Upload is already confirmed",
+        )
+
     # Verify user has this resource
     ur_result = await session.execute(
         select(UserResource).where(
@@ -464,8 +482,8 @@ async def confirm_upload(
     max_bytes = min(resource.size_bytes, get_app_config().resources.max_size_bytes)
     try:
         pdf_bytes = await storage.async_download_file_bounded(
-            resource.content_hash,
-            folder="raw",
+            _staging_upload_key(resource.id),
+            folder=None,
             max_bytes=max_bytes,
         )
     except StorageObjectTooLargeError:
@@ -510,6 +528,14 @@ async def confirm_upload(
         )
 
     try:
+        # Promote the exact bytes that passed validation. Client upload URLs
+        # never target this final content-addressed key.
+        await storage.async_upload_file(
+            pdf_bytes,
+            resource.content_hash,
+            folder="raw",
+            content_type="application/pdf",
+        )
         resource.page_count = len(doc)
         resource.upload_confirmed = True
         await session.flush()
@@ -534,6 +560,18 @@ async def confirm_upload(
                 )
         except Exception as e:
             logging.warning(f"Failed to generate thumbnail for {resource_id}: {e}")
+
+        try:
+            await storage.async_delete_file(
+                _staging_upload_key(resource.id),
+                folder=None,
+            )
+        except Exception as exc:
+            logging.warning(
+                "Failed to delete confirmed staging object %s: %s",
+                resource.id,
+                exc,
+            )
     finally:
         doc.close()
     await session.refresh(resource)
@@ -852,12 +890,16 @@ async def delete_resource(
         other_count = other_users.scalar() or 0
 
         if other_count == 0:
-            # Delete from R2
-            content_hash = resource.content_hash
-            if not content_hash.startswith("pending_"):
+            if resource.upload_confirmed:
+                content_hash = resource.content_hash
                 await storage.async_delete_file(content_hash, folder="raw")
                 await storage.async_delete_file(content_hash, folder="thumbnails")
                 await storage.async_delete_processed_folder(content_hash)
+            else:
+                await storage.async_delete_file(
+                    _staging_upload_key(resource.id),
+                    folder=None,
+                )
 
             # Delete from database
             await session.delete(resource)
