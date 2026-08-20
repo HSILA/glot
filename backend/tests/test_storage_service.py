@@ -25,11 +25,25 @@ class _NoSuchKeyError(Exception):
 
 
 class _Client404Error(Exception):
-    """Minimal stand-in for a botocore ClientError with HTTP 404."""
+    """Minimal stand-in for a botocore ClientError with a NoSuchKey payload."""
 
     def __init__(self):
         super().__init__("not found")
-        self.response = {"ResponseMetadata": {"HTTPStatusCode": 404}}
+        self.response = {
+            "Error": {"Code": "NoSuchKey"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        }
+
+
+class _Client404BucketError(Exception):
+    """Minimal stand-in for a 404 bucket-level fault (NOT an absent object)."""
+
+    def __init__(self):
+        super().__init__("not found")
+        self.response = {
+            "Error": {"Code": "NoSuchBucket"},
+            "ResponseMetadata": {"HTTPStatusCode": 404},
+        }
 
 
 def test_bounded_download_missing_key_raises_not_found() -> None:
@@ -43,12 +57,24 @@ def test_bounded_download_missing_key_raises_not_found() -> None:
 
 def test_bounded_download_404_client_error_raises_not_found() -> None:
     service, client = _build_storage_service()
-    # R2 may surface a generic ClientError with HTTP 404 rather than NoSuchKey.
+    # R2 may surface a missing key as a generic ClientError rather than NoSuchKey.
     client.exceptions.NoSuchKey = _NoSuchKeyError
     client.exceptions.ClientError = _Client404Error
     client.get_object.side_effect = _Client404Error()
 
     with pytest.raises(StorageObjectNotFoundError):
+        service.download_file_bounded("uploads/7.pdf", max_bytes=10, folder=None)
+
+
+def test_bounded_download_404_bucket_fault_propagates() -> None:
+    # A 404 bucket-level fault must NOT be treated as an empty upload: it
+    # surfaces as ClientError with Code != NoSuchKey and must propagate.
+    service, client = _build_storage_service()
+    client.exceptions.NoSuchKey = _NoSuchKeyError
+    client.exceptions.ClientError = _Client404BucketError
+    client.get_object.side_effect = _Client404BucketError()
+
+    with pytest.raises(_Client404BucketError):
         service.download_file_bounded("uploads/7.pdf", max_bytes=10, folder=None)
 
 

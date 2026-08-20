@@ -253,19 +253,23 @@ def _storage(list_keys=None):
     return storage
 
 
-def _sweep_session(step1_result, get_rows=None):
+def _sweep_session(executes):
+    """Build a session for sweep tests.
+
+    ``executes`` is the ordered list of result values for each ``session.execute``
+    call (step-1 candidate select, step-1 delete(UserResource) rows, then the
+    step-2 batched id-resolution query).
+    """
     session = AsyncMock()
-    session.execute.return_value = _result(step1_result)
-    session.get.side_effect = (
-        list(get_rows) if get_rows is not None else []
-    )
+    session.execute.side_effect = [_result(v) for v in executes]
     return session
 
 
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> None:
     resource = _unconfirmed_upload()
-    session = _sweep_session(step1_result=[resource])
+    # Executes: step-1 candidate select, then delete(UserResource) for the sweep.
+    session = _sweep_session([[resource], []])
     storage = _storage()  # no leftover staging objects
 
     monkeypatch.setattr(
@@ -288,7 +292,7 @@ async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> 
 async def test_sweep_expired_uploads_skips_confirmed_resources(monkeypatch) -> None:
     resource = _unconfirmed_upload()
     resource.upload_confirmed = True  # a confirm won the race to the row lock
-    session = _sweep_session(step1_result=[resource])
+    session = _sweep_session([[resource]])
     storage = _storage()
 
     monkeypatch.setattr(
@@ -312,7 +316,7 @@ async def test_sweep_expired_uploads_cleans_confirmed_staging(monkeypatch) -> No
     confirmed.upload_confirmed = True  # confirmed; only its staging is garbage
     # Step 1 finds no expired reservations; step 2 finds the confirmed staging
     # object in storage and resolves it to the confirmed row.
-    session = _sweep_session(step1_result=[], get_rows=[confirmed])
+    session = _sweep_session([[], [confirmed]])
     storage = _storage(list_keys=["uploads/77.pdf"])
 
     monkeypatch.setattr(
@@ -332,7 +336,7 @@ async def test_sweep_expired_uploads_cleans_confirmed_staging(monkeypatch) -> No
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_deletes_orphaned_staging(monkeypatch) -> None:
     # A staging object exists with NO matching resource row -> orphan, deleted.
-    session = _sweep_session(step1_result=[], get_rows=[None])
+    session = _sweep_session([[], []])  # id-resolution returns nothing
     storage = _storage(list_keys=["uploads/88.pdf"])
 
     monkeypatch.setattr(
@@ -354,7 +358,7 @@ async def test_sweep_expired_uploads_leaves_recent_confirmed_staging(monkeypatch
     recent = _unconfirmed_upload(resource_id=99)
     recent.upload_confirmed = True
     recent.uploaded_at = datetime.now(UTC) - timedelta(minutes=1)  # too recent
-    session = _sweep_session(step1_result=[], get_rows=[recent])
+    session = _sweep_session([[], [recent]])
     storage = _storage(list_keys=["uploads/99.pdf"])
 
     monkeypatch.setattr(
@@ -371,7 +375,7 @@ async def test_sweep_expired_uploads_leaves_recent_confirmed_staging(monkeypatch
 
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_is_noop_without_candidates(monkeypatch) -> None:
-    session = _sweep_session(step1_result=[])
+    session = _sweep_session([[]])
     storage = _storage()
 
     monkeypatch.setattr(
@@ -390,7 +394,7 @@ async def test_sweep_expired_uploads_is_noop_without_candidates(monkeypatch) -> 
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_skips_on_staging_delete_failure(monkeypatch) -> None:
     resource = _unconfirmed_upload()
-    session = _sweep_session(step1_result=[resource])
+    session = _sweep_session([[resource]])
     storage = _storage()
     storage.async_delete_file = AsyncMock(side_effect=RuntimeError("R2 unavailable"))
 

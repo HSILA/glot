@@ -208,9 +208,16 @@ class StorageService:
                 f"Storage object not found: {key}"
             ) from exc
         except self._client.exceptions.ClientError as exc:
-            # R2 does not always surface NoSuchKey; treat any 404-shaped
-            # response as "object absent".
-            if exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode") == 404:
+            # R2 may surface a missing key as a generic ClientError rather than
+            # the modeled NoSuchKey. Distinguish a genuinely absent object from
+            # a bucket-level fault (which also comes back 404) by error code, so
+            # a misconfigured bucket is never mistaken for an empty upload.
+            error = (
+                exc.response.get("Error", {})
+                if hasattr(exc, "response") and exc.response
+                else {}
+            )
+            if error.get("Code") == "NoSuchKey":
                 raise StorageObjectNotFoundError(
                     f"Storage object not found: {key}"
                 ) from exc

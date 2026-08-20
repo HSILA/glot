@@ -821,11 +821,28 @@ async def sweep_expired_uploads(ctx: dict):
                 logger.warning(f"Failed to list staging objects: {e}")
                 keys = []
 
+            # Resolve all candidate resource ids in ONE query, then commit so the
+            # transaction is closed before any R2 network I/O. Keeps the sweep
+            # from holding an idle-in-transaction connection across the deletes.
+            id_col = Resource.__table__.c.id
+            resource_ids = [
+                rid
+                for key in keys
+                if (rid := _staging_key_resource_id(key)) is not None
+            ]
+            rows_by_id: dict[int, Resource | None] = {}
+            if resource_ids:
+                known = await session.execute(
+                    select(Resource).where(id_col.in_(resource_ids))
+                )
+                rows_by_id = {r.id: r for r in known.scalars().all()}
+                await session.commit()
+
             for key in keys:
                 resource_id = _staging_key_resource_id(key)
                 if resource_id is None:
                     continue
-                row = await session.get(Resource, resource_id)
+                row = rows_by_id.get(resource_id)
                 # Safe to delete staging when the row is gone (orphan) or the
                 # resource is confirmed (staging is never needed again) and old.
                 if row is None or (
