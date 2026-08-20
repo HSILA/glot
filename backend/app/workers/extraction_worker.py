@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 
 from app.agents import ExtractionAgent
 from app.core import get_settings
+from app.core.app_config import get_app_config
 from app.core.datetime_utils import utc_now
 from app.db import async_session_factory
 from app.models import PageExtraction, PageStatus, Resource
@@ -138,7 +139,7 @@ def _get_or_init_extraction_agent(ctx: dict) -> ExtractionAgent:
         settings = _get_or_init_worker_settings(ctx)
         agent = ExtractionAgent(
             api_key=settings.openrouter_api_key,
-            model_id=settings.extraction_agent_model,
+            model_id=get_app_config().extraction.agent_model,
         )
         ctx["extraction_agent"] = agent
     return agent
@@ -765,4 +766,4 @@ class WorkerSettings:
     job_timeout = 1200
     keep_result = 0
     health_check_interval = 600
-    poll_delay = get_settings().extraction_worker_poll_delay_seconds
+    poll_delay = get_app_config().extraction.worker_poll_delay_seconds

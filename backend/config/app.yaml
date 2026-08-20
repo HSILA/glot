@@ -1,0 +1,33 @@
+# Canonical app config. No env overrides; missing/invalid values fail startup.
+version: 1
+
+scheduling:
+  maximum_interval_days: 90
+  enable_fuzz: true
+
+auth:
+  jwt_algorithm: HS256
+  access_token_expire_minutes: 30
+  refresh_token_expire_days: 14
+
+resources:
+  max_size_bytes: 78643200
+  max_files_per_user: 10
+  allowed_types:
+    - application/pdf
+
+extraction:
+  agent_model: qwen/qwen3-vl-235b-a22b-instruct
+  worker_poll_delay_seconds: 15
+
+database_pool:
+  pre_ping: true
+  recycle_seconds: 1800
+  size: 10
+  max_overflow: 20
+  timeout_seconds: 30
+
+rate_limits:
+  login: 5/5minutes
+  register: 3/hour
+  refresh: 10/minute

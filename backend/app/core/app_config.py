@@ -1,0 +1,200 @@
+"""
+Canonical app-wide configuration, loaded from a version-controlled YAML file.
+
+`backend/config/app.yaml` is the single source of truth for values that apply
+globally rather than per-request or per-secret. It is validated strictly at
+startup:
+
+- the file must exist and be a YAML mapping
+- every field in every section is required (no fallback defaults in Python)
+- unknown fields, unknown sections, and wrong types are rejected
+
+There is deliberately no environment override and no default value for any
+field here. A silent fallback (e.g. a wrong scheduling cap) would persist
+incorrect values into the database, and unlike a failed startup that damage
+is not self-correcting.
+
+Secrets, deployment endpoints/origins/modes, `app_name`, and `app_version`
+live in `app.core.Settings` instead. Per-user scheduling settings
+(desired_retention, weights) live in the `user_settings` table.
+"""
+
+import re
+from functools import lru_cache
+from pathlib import Path
+
+import yaml
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    ValidationError,
+    field_validator,
+)
+
+# The config directory sits next to the `app` package, both locally
+# (backend/config) and in the image (/app/config, see Dockerfile).
+DEFAULT_APP_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "app.yaml"
+
+# Guards against a typo turning into an effectively unbounded interval.
+MAX_ALLOWED_INTERVAL_DAYS = 36500
+
+_RATE_LIMIT_PATTERN = re.compile(r"^\d+/\d*(second|minute|hour|day)s?$")
+
+
+class AppConfigError(RuntimeError):
+    """Raised when the app config file is missing or invalid."""
+
+
+class SchedulingSection(BaseModel):
+    """Global scheduling values applied to every user."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    maximum_interval_days: StrictInt = Field(
+        ge=1,
+        le=MAX_ALLOWED_INTERVAL_DAYS,
+        description="Hard cap in days on the interval FSRS may assign to a card",
+    )
+    enable_fuzz: StrictBool = Field(
+        description="Add randomness to intervals to prevent review clumping",
+    )
+
+
+class AuthSection(BaseModel):
+    """JWT and session token policy."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    jwt_algorithm: StrictStr = Field(min_length=1)
+    access_token_expire_minutes: StrictInt = Field(ge=1)
+    refresh_token_expire_days: StrictInt = Field(ge=1)
+
+
+class ResourcesSection(BaseModel):
+    """Upload constraints applied to every user."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_size_bytes: StrictInt = Field(ge=1)
+    max_files_per_user: StrictInt = Field(ge=1)
+    allowed_types: list[StrictStr] = Field(min_length=1)
+
+
+class ExtractionSection(BaseModel):
+    """Extraction agent model and worker polling cadence."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    agent_model: StrictStr = Field(min_length=1)
+    worker_poll_delay_seconds: StrictInt = Field(ge=0)
+
+
+class DatabasePoolSection(BaseModel):
+    """SQLAlchemy connection pool tuning."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pre_ping: StrictBool
+    recycle_seconds: StrictInt = Field(ge=1)
+    size: StrictInt = Field(ge=1)
+    max_overflow: StrictInt = Field(ge=0)
+    timeout_seconds: StrictInt = Field(ge=1)
+
+
+class RateLimitsSection(BaseModel):
+    """Per-endpoint rate limit strings, in slowapi's `<count>/<period>` format."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    login: StrictStr
+    # Field name avoids "register", which shadows the `register` classmethod
+    # ABCMeta contributes to every pydantic BaseModel; the YAML key stays "register".
+    register_limit: StrictStr = Field(validation_alias="register")
+    refresh: StrictStr
+
+    @field_validator("login", "register_limit", "refresh")
+    @classmethod
+    def validate_rate_limit_format(cls, value: str) -> str:
+        if not _RATE_LIMIT_PATTERN.match(value):
+            raise ValueError(
+                f"Invalid rate limit format: {value!r} "
+                "(expected '<count>/<count><period>', e.g. '5/5minutes' or '3/hour')"
+            )
+        return value
+
+
+class AppConfig(BaseModel):
+    """Top-level structure of `config/app.yaml`."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    version: StrictInt = Field(
+        description="Schema version; the loader rejects versions it cannot read",
+    )
+    scheduling: SchedulingSection
+    auth: AuthSection
+    resources: ResourcesSection
+    extraction: ExtractionSection
+    database_pool: DatabasePoolSection
+    rate_limits: RateLimitsSection
+
+    @field_validator("version")
+    @classmethod
+    def validate_version(cls, value: int) -> int:
+        if value != 1:
+            raise ValueError(f"Unsupported app config version: {value}")
+        return value
+
+
+def load_app_config(path: Path | None = None) -> AppConfig:
+    """
+    Load and validate the app config file.
+
+    Args:
+        path: Config file to read. Defaults to the committed repository file.
+
+    Raises:
+        AppConfigError: If the file is missing, unreadable, not valid YAML,
+            or does not satisfy the schema.
+    """
+    config_path = Path(path) if path is not None else DEFAULT_APP_CONFIG_PATH
+
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise AppConfigError(
+            f"App config file not found: {config_path}. "
+            "This file is required and must be committed to the repository."
+        ) from exc
+    except OSError as exc:
+        raise AppConfigError(
+            f"App config file could not be read: {config_path}: {exc}"
+        ) from exc
+
+    try:
+        data = yaml.safe_load(raw)
+    except yaml.YAMLError as exc:
+        raise AppConfigError(
+            f"App config file is not valid YAML: {config_path}: {exc}"
+        ) from exc
+
+    if not isinstance(data, dict):
+        raise AppConfigError(
+            f"App config file must contain a YAML mapping at the top level: "
+            f"{config_path} (got {type(data).__name__})"
+        )
+
+    try:
+        return AppConfig.model_validate(data)
+    except ValidationError as exc:
+        raise AppConfigError(f"Invalid app config file: {config_path}\n{exc}") from exc
+
+
+@lru_cache
+def get_app_config() -> AppConfig:
+    """Get the cached app config from the committed config file."""
+    return load_app_config()

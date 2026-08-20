@@ -34,7 +34,7 @@ class UserSettings(SQLModel, table=True):
         - desired_retention: Target recall probability (default: 0.9)
         - weights: Algorithm parameters (default: library defaults, 19 floats)
 
-    Global scheduling policy (see config/scheduling.yaml):
+    Global scheduling policy (see config/app.yaml):
         - maximum_interval_days: Max days between reviews
         - enable_fuzz: Add randomness to intervals
     """

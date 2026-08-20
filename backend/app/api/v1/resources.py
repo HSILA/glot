@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core import get_settings
+from app.core.app_config import get_app_config
 from app.dependencies import get_async_session, get_current_user, get_storage_service
 from app.models import Resource, User, UserResource
 from app.models.resource import ExtractionStatus
@@ -159,13 +160,13 @@ async def request_upload(
     Client must compute content_hash (SHA-256) before calling this endpoint.
     This enables content deduplication and content-addressable storage.
     """
-    settings = get_settings()
+    resources_config = get_app_config().resources
 
     # Check file size limit
-    if request.size_bytes > settings.resource_max_size_bytes:
+    if request.size_bytes > resources_config.max_size_bytes:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File too large. Maximum size is {settings.resource_max_size_bytes // (1024 * 1024)} MB",
+            detail=f"File too large. Maximum size is {resources_config.max_size_bytes // (1024 * 1024)} MB",
         )
 
     # Check user's file count limit
@@ -177,10 +178,10 @@ async def request_upload(
     result = await session.execute(count_query)
     current_count = result.scalar() or 0
 
-    if current_count >= settings.resource_max_files_per_user:
+    if current_count >= resources_config.max_files_per_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File limit reached. Maximum is {settings.resource_max_files_per_user} files",
+            detail=f"File limit reached. Maximum is {resources_config.max_files_per_user} files",
         )
 
     # Check if content already exists (deduplication)
@@ -504,7 +505,7 @@ async def add_public_resource(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Add a public resource to user's library."""
-    settings = get_settings()
+    resources_config = get_app_config().resources
 
     resource = await session.get(Resource, resource_id)
     if not resource or not resource.is_public:
@@ -535,10 +536,10 @@ async def add_public_resource(
     result = await session.execute(count_query)
     current_count = result.scalar() or 0
 
-    if current_count >= settings.resource_max_files_per_user:
+    if current_count >= resources_config.max_files_per_user:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"File limit reached. Maximum is {settings.resource_max_files_per_user} files",
+            detail=f"File limit reached. Maximum is {resources_config.max_files_per_user} files",
         )
 
     # Add to library

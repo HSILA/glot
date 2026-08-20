@@ -43,16 +43,13 @@ app/
 
 ## Configuration
 
-### Global Scheduling Policy
+### App Config
 
-The canonical global policy is version-controlled in
-`config/scheduling.yaml`. It is validated at startup and has no environment
-overrides or Python fallback defaults.
-
-| Setting | Value |
-|---------|-------|
-| `maximum_interval_days` | 90 |
-| `enable_fuzz` | true |
+Stable, non-secret policy (scheduling, auth token lifetimes, extraction
+model, database pool sizing, rate limits, resource limits) lives in the
+concise, version-controlled `config/app.yaml`, validated by Pydantic at
+startup. Secrets and deployment-specific values (DB/Redis URLs, JWT secret,
+CORS, R2 credentials) stay in the environment.
 
 ### Per-User Settings (Database)
 

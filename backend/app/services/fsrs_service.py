@@ -51,7 +51,7 @@ class FSRSService:
         Initialize scheduling service with configuration.
 
         The global policy values are required and have no defaults here: they
-        come from config/scheduling.yaml (see app.core.scheduling). Forgetting to
+        come from config/app.yaml (see app.core.app_config). Forgetting to
         pass them is a TypeError rather than a silently wrong schedule.
 
         Args:

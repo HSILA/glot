@@ -19,6 +19,7 @@ from argon2.exceptions import InvalidHashError, VerifyMismatchError
 from user_agents import parse as parse_user_agent
 
 from app.core import get_settings
+from app.core.app_config import get_app_config
 
 # Password hashing with Argon2 (no length limits, modern algorithm)
 ph = PasswordHasher()
@@ -129,7 +130,8 @@ def create_access_token(user_id: int) -> str:
     Token expires after access_token_expire_minutes.
     """
     settings = get_settings()
-    expire = datetime.now(UTC) + timedelta(minutes=settings.access_token_expire_minutes)
+    auth_config = get_app_config().auth
+    expire = datetime.now(UTC) + timedelta(minutes=auth_config.access_token_expire_minutes)
 
     payload = {
         "sub": str(user_id),  # Subject (user ID)
@@ -138,7 +140,7 @@ def create_access_token(user_id: int) -> str:
         "type": "access",  # Token type
     }
 
-    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.jwt_secret, algorithm=auth_config.jwt_algorithm)
 
 
 def decode_access_token(token: str) -> dict | None:
@@ -152,7 +154,7 @@ def decode_access_token(token: str) -> dict | None:
         payload = jwt.decode(
             token,
             settings.jwt_secret,
-            algorithms=[settings.jwt_algorithm],
+            algorithms=[get_app_config().auth.jwt_algorithm],
         )
         # Verify it's an access token
         if payload.get("type") != "access":
