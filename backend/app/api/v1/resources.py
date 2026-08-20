@@ -299,7 +299,9 @@ async def request_upload(
                     name=request.name,
                 )
                 session.add(user_resource)
-                await session.flush()
+
+            existing_resource.uploaded_at = datetime.now(UTC)
+            await session.flush()
 
             upload_url = storage.generate_upload_url(
                 request.content_hash,
@@ -424,8 +426,13 @@ async def confirm_upload(
     otherwise a caller could presign, upload arbitrary content, and confirm
     a resource that doesn't match what deduplication/downloads assume it is.
     """
-    # Get the resource
-    resource = await session.get(Resource, resource_id)
+    # Lock the reservation through download and validation so expiry takeover
+    # cannot transfer ownership underneath an in-flight confirmation.
+    resource = await session.get(
+        Resource,
+        resource_id,
+        with_for_update=True,
+    )
     if not resource:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

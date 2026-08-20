@@ -122,7 +122,9 @@ async def test_owner_can_resume_an_unconfirmed_upload():
         upload_confirmed=False,
         file_name=request.file_name,
         uploaded_by=1,
+        uploaded_at=datetime.now(UTC) - timedelta(minutes=5),
     )
+    previous_expiry_base = pending.uploaded_at
     link = UserResource(user_id=1, resource_id=1, name=request.name)
     existing_result = Mock()
     existing_result.scalar_one_or_none.return_value = pending
@@ -143,11 +145,13 @@ async def test_owner_can_resume_an_unconfirmed_upload():
 
     assert response.resource_id == 1
     assert response.upload_url == "https://upload.example"
+    assert pending.uploaded_at > previous_expiry_base
     storage.generate_upload_url.assert_called_once_with(
         request.content_hash,
         content_type=request.content_type,
     )
     assert session.execute.await_count == 2
+    session.flush.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -272,7 +276,10 @@ async def test_same_hash_insert_race_recovers_winning_resource():
     session.begin_nested = Mock(return_value=nested)
     session.add = Mock()
     session.flush = AsyncMock(
-        side_effect=IntegrityError("insert", {}, RuntimeError("duplicate"))
+        side_effect=[
+            IntegrityError("insert", {}, RuntimeError("duplicate")),
+            None,
+        ]
     )
     storage = Mock()
     storage.generate_upload_url.return_value = "https://upload.example"
@@ -441,6 +448,7 @@ async def test_confirm_upload_accepts_matching_valid_pdf():
     assert response.page_count == 1
     storage.async_delete_file.assert_not_awaited()
     session.delete.assert_not_awaited()
+    session.get.assert_awaited_once_with(Resource, 1, with_for_update=True)
 
 
 @pytest.mark.asyncio
