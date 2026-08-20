@@ -9,7 +9,7 @@ Ownership: ReviewLogs inherit user ownership via card_id → cards.deck_id → d
 
 from datetime import datetime
 
-from sqlalchemy import Column, Index, text
+from sqlalchemy import Column, ForeignKey, Index, Integer, text
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
@@ -44,8 +44,15 @@ class ReviewLog(SQLModel, table=True):
 
     id: int | None = Field(default=None, primary_key=True)
     card_id: int = Field(
-        foreign_key="cards.id",
-        index=True,
+        sa_column=Column(
+            Integer,
+            # Review history has no meaning once its card is gone; deleting a
+            # card cascades to its logs so DELETE actually succeeds (previously
+            # the FK blocked deletion and the API returned a phantom 204).
+            ForeignKey("cards.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
         description="Card that was reviewed",
     )
 
