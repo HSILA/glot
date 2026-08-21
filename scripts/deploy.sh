@@ -89,20 +89,24 @@ finish_step
 
 start_step "[7/10] Health check backend"
 HEALTH_OK=false
-for i in $(seq 1 30); do
-  if curl -sf http://127.0.0.1:8000/docs > /dev/null 2>&1; then
+# The box is small (961 MB) and the Neon connection is cold on a fresh start
+# after migrations; the backend can take well over a minute to become ready.
+# Wait generously (90 attempts ~ 3 min) so a slow-but-successful startup is not
+# reported as a failed deploy. Use the real /health endpoint, not Swagger docs.
+for i in $(seq 1 90); do
+  if curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1; then
     log "  ✓ Backend is healthy attempt=$i"
-    HEALTH_OK=true
+    HEALTH_OK=1
     break
   fi
-  if [ "$i" -eq 30 ]; then
-    log "  ✗ Backend health check failed after 30 attempts"
+  if [ "$i" -eq 90 ]; then
+    log "  ✗ Backend health check failed after 90 attempts"
     break
   fi
   sleep 2
 done
 
-if [ "$HEALTH_OK" = "false" ]; then
+if [ "$HEALTH_OK" != "1" ]; then
   log "  ✗ Deploy failed — backend unhealthy"
   docker compose -f "$COMPOSE_FILE" logs --tail=50 backend || true
   fail_step
