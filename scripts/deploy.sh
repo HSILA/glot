@@ -106,7 +106,7 @@ for i in $(seq 1 90); do
   sleep 2
 done
 
-if [ "$HEALTH_OK" = "0" ]; then
+if [ "$HEALTH_OK" != "1" ]; then
   log "  ✗ Deploy failed — backend unhealthy"
   docker compose -f "$COMPOSE_FILE" logs --tail=50 backend || true
   fail_step
