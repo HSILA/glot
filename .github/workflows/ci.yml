@@ -45,13 +45,13 @@ jobs:
           cache-dependency-glob: backend/uv.lock
 
       - name: Install backend dependencies
-        run: uv sync --frozen --extra dev
+        run: uv sync --locked --extra dev
 
       - name: Lint backend
-        run: uv run --frozen ruff check .
+        run: uv run --locked ruff check .
 
       - name: Test backend
-        run: uv run --frozen pytest
+        run: uv run --locked pytest
 
   frontend:
     name: Frontend checks
