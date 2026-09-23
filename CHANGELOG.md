@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.3.5](https://github.com/HSILA/glot/compare/v0.3.4...v0.3.5) (2026-09-23)
+
+
+### Bug Fixes
+
+* **deps:** resolve all open Dependabot alerts ([#122](https://github.com/HSILA/glot/issues/122)) ([da1fdc0](https://github.com/HSILA/glot/commit/da1fdc098c529558b601556103082dba864482a7))
+* **infra:** extend deploy health-check timeout for slow cold starts ([#118](https://github.com/HSILA/glot/issues/118)) ([b3366d2](https://github.com/HSILA/glot/commit/b3366d2d1c8138905806f863ef9a6129880e2aa6))
+
+
+### Miscellaneous Chores
+
+* **infra:** add pull request quality checks ([#119](https://github.com/HSILA/glot/issues/119)) ([9f864a6](https://github.com/HSILA/glot/commit/9f864a6d351d3c37f91c313735b271154609070f))
+* **infra:** enforce uv.lock freshness in CI ([#121](https://github.com/HSILA/glot/issues/121)) ([3644c36](https://github.com/HSILA/glot/commit/3644c368ccd9deba25d81f0d127707a7900a3f7f))
+
 ## [0.3.4](https://github.com/HSILA/glot/compare/v0.3.3...v0.3.4) (2026-08-20)
 
 
