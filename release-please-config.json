@@ -34,6 +34,11 @@
           "jsonpath": "$.project.version"
         },
         {
+          "type": "toml",
+          "path": "backend/uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='glot-backend')].version"
+        },
+        {
           "type": "generic",
           "path": "backend/app/core/__init__.py"
         }
