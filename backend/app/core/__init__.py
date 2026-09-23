@@ -4,6 +4,7 @@ Core configuration and settings for the Glot backend.
 
 import json
 from functools import lru_cache
+from typing import ClassVar
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -18,9 +19,10 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # App
+    # App. ClassVar: release-managed (x-release-please-version), never
+    # populated from the environment.
     app_name: str = "Glot API"
-    app_version: str = "0.3.5"  # x-release-please-version
+    app_version: ClassVar[str] = "0.3.5"  # x-release-please-version
     debug: bool = False
 
     # Database
