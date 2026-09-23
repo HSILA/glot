@@ -3,6 +3,7 @@ Cards API endpoints.
 
 Endpoints:
     GET  /cards          - List all cards (with filters)
+    POST /cards/check-words - Check candidate words against existing cards
     GET  /cards/due      - Get cards due for review
     GET  /cards/{id}     - Get a single card
     POST /cards          - Create a new card
@@ -33,10 +34,15 @@ from app.schemas import (
     CardListResponse,
     CardRead,
     CardUpdate,
+    CardWordSearchMatch,
+    CardWordSearchRequest,
+    CardWordSearchResponse,
+    CardWordSearchResult,
     NextStatesResponse,
 )
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
+from app.services.card_word_search import CardWordSearchCard, find_word_matches
 from app.services.review_queue import order_due_cards
 
 router = APIRouter()
@@ -146,6 +152,95 @@ async def list_cards(
     items = result.scalars().all()
 
     return CardListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+async def _get_unique_owned_deck_id(
+    session: AsyncSession,
+    deck_name: str,
+    user_id: int,
+) -> int:
+    """Resolve one owned deck name without choosing between duplicates."""
+    result = await session.execute(
+        select(Deck).where(Deck.user_id == user_id, Deck.name == deck_name)
+    )
+    decks = result.scalars().all()
+
+    if not decks:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    if len(decks) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Deck name is ambiguous",
+        )
+
+    deck_id = decks[0].id
+    if deck_id is None:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    return deck_id
+
+
+@router.post("/check-words", response_model=CardWordSearchResponse)
+async def check_card_words(
+    request: CardWordSearchRequest,
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Check candidate French words against existing card front content."""
+    deck_id = None
+    if request.deck_name is not None:
+        deck_id = await _get_unique_owned_deck_id(
+            session,
+            request.deck_name,
+            current_user.id,
+        )
+
+    cards_query = (
+        select(Card, Deck.name)
+        .join(Deck, Card.deck_id == Deck.id)
+        .where(Deck.user_id == current_user.id)
+        .order_by(Deck.id.asc(), Card.id.asc())
+    )
+    if deck_id is not None:
+        cards_query = cards_query.where(Card.deck_id == deck_id)
+
+    result = await session.execute(cards_query)
+    cards = [
+        CardWordSearchCard(
+            id=card.id,
+            deck_id=card.deck_id,
+            deck_name=deck_name,
+            front_content=card.front_content,
+            back_content=card.back_content,
+        )
+        for card, deck_name in result.all()
+        if card.id is not None
+    ]
+
+    word_results = find_word_matches(request.words, cards)
+    return CardWordSearchResponse(
+        deck_name=request.deck_name,
+        results=[
+            CardWordSearchResult(
+                query=word_result.query,
+                normalized_query=word_result.normalized_query,
+                lemma=word_result.lemma,
+                has_match=bool(word_result.matches),
+                matches=[
+                    CardWordSearchMatch(
+                        card_id=match.card.id,
+                        deck_id=match.card.deck_id,
+                        deck_name=match.card.deck_name,
+                        front_content=match.card.front_content,
+                        back_content=match.card.back_content,
+                        matched_form=match.matched_form,
+                        match_type=match.match_type,
+                    )
+                    for match in word_result.matches
+                ],
+            )
+            for word_result in word_results
+        ],
+    )
 
 
 @router.get("/due", response_model=list[CardRead])

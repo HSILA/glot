@@ -4,8 +4,9 @@ Card schemas for API request/response validation.
 
 from datetime import datetime
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.models.card import CardState
 
@@ -133,6 +134,67 @@ class CardListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class CardWordSearchRequest(BaseModel):
+    """Words to check against existing card front content."""
+
+    words: list[str] = Field(
+        min_length=1,
+        max_length=100,
+        description="Candidate words to check, in request order",
+    )
+    deck_name: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=255,
+        description="Optional owned deck name to scope the search",
+    )
+
+    @field_validator("words")
+    @classmethod
+    def validate_words(cls, value: list[str]) -> list[str]:
+        """Reject blank candidate words while preserving their original text."""
+        if any(not word.strip() for word in value):
+            raise ValueError("words must not contain blank values")
+        return value
+
+    @field_validator("deck_name")
+    @classmethod
+    def validate_deck_name(cls, value: str | None) -> str | None:
+        """Reject a deck scope containing only whitespace."""
+        if value is not None and not value.strip():
+            raise ValueError("deck_name must not be blank")
+        return value
+
+
+class CardWordSearchMatch(BaseModel):
+    """One existing card matched by a candidate word."""
+
+    card_id: int
+    deck_id: int
+    deck_name: str
+    front_content: str
+    back_content: str
+    matched_form: str
+    match_type: Literal["exact", "lemma"]
+
+
+class CardWordSearchResult(BaseModel):
+    """Matches for one candidate word."""
+
+    query: str
+    normalized_query: str
+    lemma: str
+    has_match: bool
+    matches: list[CardWordSearchMatch]
+
+
+class CardWordSearchResponse(BaseModel):
+    """Batch word-search response."""
+
+    deck_name: str | None
+    results: list[CardWordSearchResult]
 
 
 class ReviewRequest(BaseModel):
