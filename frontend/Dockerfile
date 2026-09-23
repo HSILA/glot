@@ -1,13 +1,13 @@
 # Frontend Dockerfile for Next.js with Bun
 
 # Stage 1: Install dependencies
-FROM oven/bun:1 AS deps
+FROM oven/bun:1.4.2 AS deps
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile
 
 # Stage 2: Build the application
-FROM oven/bun:1 AS builder
+FROM oven/bun:1.4.2 AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -19,7 +19,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 RUN bun run build
 
 # Stage 3: Production image (use full image, not slim)
-FROM oven/bun:1 AS runner
+FROM oven/bun:1.4.2 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
