@@ -63,9 +63,51 @@ async def test_check_words_loads_all_owned_cards_in_one_batch_query():
     assert session.execute.await_count == 1
     assert response.deck_name is None
     assert [result.has_match for result in response.results] == [True, True]
+    assert [result.match_count for result in response.results] == [1, 1]
+    assert [result.matches_truncated for result in response.results] == [False, False]
     assert response.results[0].matches[0].card_id == 1
     assert response.results[0].matches[0].deck_name == "French A"
     assert response.results[1].matches[0].card_id == 2
+
+
+@pytest.mark.asyncio
+async def test_check_words_supports_phrase_lemma_matching():
+    session = AsyncMock()
+    session.execute.return_value = _RowsResult(
+        [(_card(1, "Elle prend soin de lui."), "French")]
+    )
+
+    response = await check_card_words(
+        CardWordSearchRequest(words=["prendre soin de"]),
+        session,
+        _user(),
+    )
+
+    result = response.results[0]
+    assert result.has_match is True
+    assert result.match_count == 1
+    assert result.matches[0].matched_form == "prend soin de"
+    assert result.matches[0].match_type == "lemma"
+
+
+@pytest.mark.asyncio
+async def test_check_words_caps_examples_but_preserves_match_count():
+    session = AsyncMock()
+    session.execute.return_value = _RowsResult(
+        [(_card(card_id, "cheval"), "French") for card_id in range(1, 7)]
+    )
+
+    response = await check_card_words(
+        CardWordSearchRequest(words=["cheval"]),
+        session,
+        _user(),
+    )
+
+    result = response.results[0]
+    assert result.has_match is True
+    assert result.match_count == 6
+    assert result.matches_truncated is True
+    assert len(result.matches) == 5
 
 
 @pytest.mark.asyncio
@@ -134,3 +176,13 @@ def test_check_words_request_rejects_blank_values():
 def test_check_words_request_rejects_blank_deck_name():
     with pytest.raises(ValueError, match="blank"):
         CardWordSearchRequest(words=["cheval"], deck_name=" ")
+
+
+def test_check_words_request_rejects_oversized_terms():
+    with pytest.raises(ValueError, match="64"):
+        CardWordSearchRequest(words=["a" * 65])
+
+
+def test_check_words_request_rejects_terms_without_letters_or_numbers():
+    with pytest.raises(ValueError, match="letter or number"):
+        CardWordSearchRequest(words=["!!!"])

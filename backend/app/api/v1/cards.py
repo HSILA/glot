@@ -224,7 +224,9 @@ async def check_card_words(
                 query=word_result.query,
                 normalized_query=word_result.normalized_query,
                 lemma=word_result.lemma,
-                has_match=bool(word_result.matches),
+                has_match=word_result.match_count > 0,
+                match_count=word_result.match_count,
+                matches_truncated=word_result.matches_truncated,
                 matches=[
                     CardWordSearchMatch(
                         card_id=match.card.id,
@@ -397,9 +399,7 @@ async def update_card(
         # If moving decks, assign a new sequence in the target deck.
         if int(update_data["deck_id"]) != int(card.deck_id):
             await session.execute(
-                select(Deck)
-                .where(Deck.id == target_deck.id)
-                .with_for_update()
+                select(Deck).where(Deck.id == target_deck.id).with_for_update()
             )
             next_sequence_query = select(
                 func.coalesce(func.max(Card.sequence), 0) + 1
@@ -478,7 +478,9 @@ async def review_card(
     """
     card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
-        logger.warning(f"Review attempted on non-existent or unauthorized card {card_id}")
+        logger.warning(
+            f"Review attempted on non-existent or unauthorized card {card_id}"
+        )
         raise HTTPException(status_code=404, detail="Card not found")
 
     # Capture state BEFORE review for logging
