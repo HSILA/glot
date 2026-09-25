@@ -2,16 +2,14 @@
 Card schemas for API request/response validation.
 """
 
-import unicodedata
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.core.french_word import normalize_search_word
 from app.models.card import CardState
-
-MAX_CARD_WORD_QUERY_LENGTH = 64
 
 
 class WordType(StrEnum):
@@ -140,12 +138,12 @@ class CardListResponse(BaseModel):
 
 
 class CardWordSearchRequest(BaseModel):
-    """Words or phrases to check against existing card front content."""
+    """Single words to check against existing one-word card fronts."""
 
     words: list[str] = Field(
         min_length=1,
         max_length=100,
-        description="Candidate words or phrases to check, in request order",
+        description="Single-word candidates to check, in request order",
     )
     deck_name: str | None = Field(
         default=None,
@@ -157,23 +155,9 @@ class CardWordSearchRequest(BaseModel):
     @field_validator("words")
     @classmethod
     def validate_words(cls, value: list[str]) -> list[str]:
-        """Reject blank, non-text, or oversized candidate terms."""
+        """Reject blank, phrase, Markdown, or oversized candidate words."""
         for word in value:
-            if not word.strip():
-                raise ValueError("words must not contain blank values")
-            normalized = unicodedata.normalize("NFC", word.strip())
-            if len(word) > MAX_CARD_WORD_QUERY_LENGTH:
-                raise ValueError(
-                    "each word or phrase must be at most "
-                    f"{MAX_CARD_WORD_QUERY_LENGTH} characters"
-                )
-            if len(normalized) > MAX_CARD_WORD_QUERY_LENGTH:
-                raise ValueError(
-                    "each normalized word or phrase must be at most "
-                    f"{MAX_CARD_WORD_QUERY_LENGTH} characters"
-                )
-            if not any(character.isalnum() for character in normalized):
-                raise ValueError("words must contain at least one letter or number")
+            normalize_search_word(word)
         return value
 
     @field_validator("deck_name")
@@ -186,19 +170,18 @@ class CardWordSearchRequest(BaseModel):
 
 
 class CardWordSearchMatch(BaseModel):
-    """One existing card matched by a candidate word or phrase."""
+    """One existing single-word card matched by a candidate."""
 
     card_id: int
     deck_id: int
     deck_name: str
     front_content: str
-    back_content: str
     matched_form: str
     match_type: Literal["exact", "lemma"]
 
 
 class CardWordSearchResult(BaseModel):
-    """Matches for one candidate word or phrase."""
+    """Matches for one candidate word."""
 
     query: str
     normalized_query: str

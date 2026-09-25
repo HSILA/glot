@@ -13,11 +13,14 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column, Index, UniqueConstraint, text
+from sqlalchemy import Column, Index, UniqueConstraint, event, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.engine import Connection
+from sqlalchemy.orm import Mapper
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
+from app.core.french_word import front_lemma_for_content
 
 
 class CardState(str, Enum):
@@ -55,6 +58,8 @@ class Card(SQLModel, table=True):
         Index("ix_cards_deck_next_review", "deck_id", "next_review_at"),
         # Composite index for "cards by state in deck" query
         Index("ix_cards_deck_state", "deck_id", "state"),
+        # Portable lookup for batches of normalized French lemmas.
+        Index("ix_cards_front_lemma_deck", "front_lemma", "deck_id"),
         # Enforce stable per-deck sequence uniqueness (gaps allowed)
         UniqueConstraint("deck_id", "sequence", name="ux_cards_deck_sequence"),
     )
@@ -80,6 +85,11 @@ class Card(SQLModel, table=True):
         min_length=1,
         max_length=10000,
         description="Question/cue side (Markdown)",
+    )
+    front_lemma: str | None = Field(
+        default=None,
+        max_length=255,
+        description="French lemma when the complete front is one plain word",
     )
     back_content: str = Field(
         min_length=1,
@@ -146,3 +156,24 @@ class Card(SQLModel, table=True):
             TimestampTZ, server_default=text("now()"), onupdate=utc_now, nullable=False
         ),
     )
+
+
+@event.listens_for(Card, "before_insert")
+def set_front_lemma_before_insert(
+    _mapper: Mapper,
+    _connection: Connection,
+    target: Card,
+) -> None:
+    """Keep derived front lemmas correct for every ORM card creation path."""
+    target.front_lemma = front_lemma_for_content(target.front_content)
+
+
+@event.listens_for(Card, "before_update")
+def update_front_lemma_before_update(
+    _mapper: Mapper,
+    _connection: Connection,
+    target: Card,
+) -> None:
+    """Recompute the derived lemma only when card front content changes."""
+    if inspect(target).attrs.front_content.history.has_changes():
+        target.front_lemma = front_lemma_for_content(target.front_content)

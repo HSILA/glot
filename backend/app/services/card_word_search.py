@@ -1,48 +1,49 @@
-"""Portable word and phrase matching for existing flashcard front content."""
+"""Portable, lemma-indexed search over one-word card fronts."""
 
-import re
-import unicodedata
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-import simplemma
+from sqlalchemy import Select, select
+
+from app.core.french_word import (
+    PreparedSearchWord,
+    front_word_for_content,
+    prepare_search_word,
+)
+from app.models.card import Card
+from app.models.deck import Deck
 
 WordMatchType = Literal["exact", "lemma"]
 MAX_MATCHES_PER_QUERY = 5
 
 
 @dataclass(frozen=True, slots=True)
-class CardWordSearchCard:
-    """The card fields needed by the word-search response."""
+class CardWordSearchHit:
+    """A card returned by the indexed lemma query."""
 
-    id: int
+    card_id: int
     deck_id: int
     deck_name: str
     front_content: str
-    back_content: str
-
-
-@dataclass(frozen=True, slots=True)
-class CardWordSearchToken:
-    """One normalized front-content token and its French lemma."""
-
-    surface: str
-    lemma: str
+    front_lemma: str
 
 
 @dataclass(frozen=True, slots=True)
 class CardWordMatch:
-    """One existing card matched by a query word or phrase."""
+    """One single-word card matched by a candidate."""
 
-    card: CardWordSearchCard
+    card_id: int
+    deck_id: int
+    deck_name: str
+    front_content: str
     matched_form: str
     match_type: WordMatchType
 
 
 @dataclass(frozen=True, slots=True)
 class WordSearchResult:
-    """Matches for one query word or phrase."""
+    """Matches for one candidate word."""
 
     query: str
     normalized_query: str
@@ -51,145 +52,99 @@ class WordSearchResult:
     matches_truncated: bool
     matches: list[CardWordMatch]
 
-
-# simplemma tokenizes text but leaves Markdown markers attached to nearby words.
-# Extracting Unicode words here keeps the matcher independent of the database and
-# removes punctuation without attempting full Markdown parsing.
-_WORD_PATTERN = re.compile(r"[^\W_]+(?:['’\-][^\W_]+)*", re.UNICODE)
-
-
-def normalize_word(value: str) -> str:
-    """Normalize one word for portable equality comparisons."""
-    return unicodedata.normalize("NFC", value).strip().lower()
+    @property
+    def has_match(self) -> bool:
+        """Return whether at least one card matched."""
+        return self.match_count > 0
 
 
-def lemma_for_word(value: str) -> str:
-    """Return the French lemma for one normalized word."""
-    return simplemma.lemmatize(
-        normalize_word(value),
-        lang="fr",
-        greedy=False,
+def build_word_search_statement(
+    lemmas: Sequence[str],
+    *,
+    user_id: int,
+    deck_id: int | None = None,
+) -> Select:
+    """Build one portable SQL query for a batch of candidate lemmas."""
+    statement = (
+        select(
+            Card.id.label("card_id"),
+            Card.deck_id.label("deck_id"),
+            Deck.name.label("deck_name"),
+            Card.front_content.label("front_content"),
+            Card.front_lemma.label("front_lemma"),
+        )
+        .select_from(Card)
+        .join(Deck, Deck.id == Card.deck_id)
+        .where(
+            Card.front_lemma.in_(sorted(set(lemmas))),
+            Deck.user_id == user_id,
+        )
+        .order_by(Card.deck_id.asc(), Card.id.asc())
     )
+    if deck_id is not None:
+        statement = statement.where(Card.deck_id == deck_id)
+    return statement
 
 
-def _tokenize(value: str) -> tuple[str, ...]:
-    """Return normalized word tokens from text in their original order."""
-    normalized_text = unicodedata.normalize("NFC", value)
-    tokens: list[str] = []
-    for token in simplemma.simple_tokenizer(normalized_text):
-        for word in _WORD_PATTERN.findall(token):
-            normalized = normalize_word(word)
-            if normalized:
-                tokens.append(normalized)
-    return tuple(tokens)
-
-
-def _front_tokens(front_content: str) -> tuple[CardWordSearchToken, ...]:
-    """Return normalized front tokens with their French lemmas."""
-    return tuple(
-        CardWordSearchToken(surface=surface, lemma=lemma_for_word(surface))
-        for surface in _tokenize(front_content)
-    )
-
-
-def _find_sequence(
-    tokens: Sequence[CardWordSearchToken],
-    query: Sequence[str],
-    attribute: Literal["surface", "lemma"],
-) -> int | None:
-    """Find a contiguous query sequence and return its first token index."""
-    query_length = len(query)
-    if not query_length or query_length > len(tokens):
-        return None
-
-    for start in range(len(tokens) - query_length + 1):
-        if tuple(
-            getattr(token, attribute) for token in tokens[start : start + query_length]
-        ) == tuple(query):
-            return start
-    return None
-
-
-def _matched_form(
-    tokens: Sequence[CardWordSearchToken],
-    start: int,
-    length: int,
-) -> str:
-    """Return the normalized surface form for a matched token sequence."""
-    return " ".join(token.surface for token in tokens[start : start + length])
-
-
-def find_word_matches(
-    words: Sequence[str],
-    cards: Iterable[CardWordSearchCard],
+def build_word_search_results(
+    words: Sequence[str | PreparedSearchWord],
+    hits: Iterable[CardWordSearchHit],
 ) -> list[WordSearchResult]:
-    """Match query words or phrases against supplied card fronts.
+    """Group indexed SQL hits into ordered, exact-first result entries."""
+    prepared_words = [
+        word if isinstance(word, PreparedSearchWord) else prepare_search_word(word)
+        for word in words
+    ]
+    hits_by_lemma: dict[str, list[tuple[CardWordSearchHit, str]]] = {}
+    for hit in hits:
+        surface = front_word_for_content(hit.front_content)
+        if surface is not None:
+            hits_by_lemma.setdefault(hit.front_lemma, []).append((hit, surface))
 
-    Exact normalized sequences take priority over French lemma sequences. Both
-    kinds of matches must be contiguous and preserve token order. The function
-    performs no database or database-specific work.
-    """
-    indexed_cards = [(card, _front_tokens(card.front_content)) for card in cards]
+    hits_by_surface: dict[str, dict[str, list[tuple[CardWordSearchHit, str]]]] = {}
+    for lemma, lemma_hits in hits_by_lemma.items():
+        lemma_hits.sort(key=lambda entry: (entry[0].deck_id, entry[0].card_id))
+        surfaces: dict[str, list[tuple[CardWordSearchHit, str]]] = {}
+        for entry in lemma_hits:
+            surfaces.setdefault(entry[1], []).append(entry)
+        hits_by_surface[lemma] = surfaces
 
     results: list[WordSearchResult] = []
-    for query in words:
-        query_tokens = _tokenize(query)
-        query_lemmas = tuple(lemma_for_word(token) for token in query_tokens)
-        normalized_query = " ".join(query_tokens)
-        query_lemma = " ".join(query_lemmas)
-        exact_matches: list[CardWordMatch] = []
-        lemma_matches: list[CardWordMatch] = []
-        exact_count = 0
-        lemma_count = 0
+    for word in prepared_words:
+        lemma_hits = hits_by_lemma.get(word.lemma, ())
+        exact_hits = hits_by_surface.get(word.lemma, {}).get(word.normalized_query, ())
+        selected: list[tuple[CardWordSearchHit, str, WordMatchType]] = [
+            (hit, surface, "exact")
+            for hit, surface in exact_hits[:MAX_MATCHES_PER_QUERY]
+        ]
+        if len(selected) < MAX_MATCHES_PER_QUERY:
+            for hit, surface in lemma_hits:
+                if surface == word.normalized_query:
+                    continue
+                selected.append((hit, surface, "lemma"))
+                if len(selected) == MAX_MATCHES_PER_QUERY:
+                    break
 
-        for card, tokens in indexed_cards:
-            exact_start = _find_sequence(tokens, query_tokens, "surface")
-            if exact_start is not None:
-                exact_count += 1
-                if len(exact_matches) < MAX_MATCHES_PER_QUERY:
-                    exact_matches.append(
-                        CardWordMatch(
-                            card=card,
-                            matched_form=_matched_form(
-                                tokens,
-                                exact_start,
-                                len(query_tokens),
-                            ),
-                            match_type="exact",
-                        )
-                    )
-                continue
-
-            lemma_start = _find_sequence(tokens, query_lemmas, "lemma")
-            if lemma_start is not None:
-                lemma_count += 1
-                if len(lemma_matches) < MAX_MATCHES_PER_QUERY:
-                    lemma_matches.append(
-                        CardWordMatch(
-                            card=card,
-                            matched_form=_matched_form(
-                                tokens,
-                                lemma_start,
-                                len(query_tokens),
-                            ),
-                            match_type="lemma",
-                        )
-                    )
-
-        match_count = exact_count + lemma_count
-        matches = (
-            exact_matches
-            + lemma_matches[: max(0, MAX_MATCHES_PER_QUERY - len(exact_matches))]
-        )
+        matches = [
+            CardWordMatch(
+                card_id=hit.card_id,
+                deck_id=hit.deck_id,
+                deck_name=hit.deck_name,
+                front_content=hit.front_content,
+                matched_form=surface,
+                match_type=match_type,
+            )
+            for hit, surface, match_type in selected
+        ]
+        match_count = len(lemma_hits)
         results.append(
             WordSearchResult(
-                query=query,
-                normalized_query=normalized_query,
-                lemma=query_lemma,
+                query=word.query,
+                normalized_query=word.normalized_query,
+                lemma=word.lemma,
                 match_count=match_count,
                 matches_truncated=match_count > MAX_MATCHES_PER_QUERY,
                 matches=matches,
             )
         )
-
     return results

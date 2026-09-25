@@ -13,6 +13,7 @@ Endpoints:
     GET  /cards/{id}/preview - Preview next intervals without reviewing
 """
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -23,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core.app_config import get_app_config
+from app.core.french_word import prepare_search_word
 from app.dependencies import (
     get_async_session,
     get_current_user,
@@ -42,7 +44,11 @@ from app.schemas import (
 )
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
-from app.services.card_word_search import CardWordSearchCard, find_word_matches
+from app.services.card_word_search import (
+    CardWordSearchHit,
+    build_word_search_results,
+    build_word_search_statement,
+)
 from app.services.review_queue import order_due_cards
 
 router = APIRouter()
@@ -186,37 +192,31 @@ async def check_card_words(
     current_user: Annotated[User, Depends(get_current_user)],
 ):
     """Check candidate French words against existing card front content."""
+    user_id = current_user.id
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
     deck_id = None
     if request.deck_name is not None:
         deck_id = await _get_unique_owned_deck_id(
             session,
             request.deck_name,
-            current_user.id,
+            user_id,
         )
 
-    cards_query = (
-        select(Card, Deck.name)
-        .join(Deck, Card.deck_id == Deck.id)
-        .where(Deck.user_id == current_user.id)
-        .order_by(Deck.id.asc(), Card.id.asc())
+    search_words = [prepare_search_word(word) for word in request.words]
+    cards_query = build_word_search_statement(
+        [word.lemma for word in search_words],
+        user_id=user_id,
+        deck_id=deck_id,
     )
-    if deck_id is not None:
-        cards_query = cards_query.where(Card.deck_id == deck_id)
-
     result = await session.execute(cards_query)
-    cards = [
-        CardWordSearchCard(
-            id=card.id,
-            deck_id=card.deck_id,
-            deck_name=deck_name,
-            front_content=card.front_content,
-            back_content=card.back_content,
-        )
-        for card, deck_name in result.all()
-        if card.id is not None
-    ]
-
-    word_results = find_word_matches(request.words, cards)
+    hit_rows = result.mappings().all()
+    word_results = await asyncio.to_thread(
+        build_word_search_results,
+        search_words,
+        (CardWordSearchHit(**row) for row in hit_rows),
+    )
     return CardWordSearchResponse(
         deck_name=request.deck_name,
         results=[
@@ -229,11 +229,10 @@ async def check_card_words(
                 matches_truncated=word_result.matches_truncated,
                 matches=[
                     CardWordSearchMatch(
-                        card_id=match.card.id,
-                        deck_id=match.card.deck_id,
-                        deck_name=match.card.deck_name,
-                        front_content=match.card.front_content,
-                        back_content=match.card.back_content,
+                        card_id=match.card_id,
+                        deck_id=match.deck_id,
+                        deck_name=match.deck_name,
+                        front_content=match.front_content,
                         matched_form=match.matched_form,
                         match_type=match.match_type,
                     )

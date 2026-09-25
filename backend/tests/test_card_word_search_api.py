@@ -5,18 +5,29 @@ from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
+from sqlalchemy.dialects.sqlite import dialect
 
+import app.api.v1.cards as cards_api
 from app.api.v1.cards import check_card_words
-from app.models import Card, Deck
+from app.models import Deck
 from app.schemas import CardWordSearchRequest
+
+
+class _MappingsResult:
+    def __init__(self, rows):
+        self._rows = rows
+
+    def all(self):
+        return self._rows
 
 
 class _RowsResult:
     def __init__(self, rows):
         self._rows = rows
 
-    def all(self):
-        return self._rows
+    def mappings(self):
+        return _MappingsResult(self._rows)
 
 
 class _ScalarsResult:
@@ -30,14 +41,20 @@ class _ScalarsResult:
         return self._values
 
 
-def _card(card_id: int, front_content: str, deck_id: int = 1) -> Card:
-    return Card(
-        id=card_id,
-        sequence=card_id,
-        deck_id=deck_id,
-        front_content=front_content,
-        back_content="translation",
-    )
+def _hit(
+    card_id: int,
+    front_content: str,
+    front_lemma: str,
+    deck_id: int = 1,
+    deck_name: str = "French",
+):
+    return {
+        "card_id": card_id,
+        "deck_id": deck_id,
+        "deck_name": deck_name,
+        "front_content": front_content,
+        "front_lemma": front_lemma,
+    }
 
 
 def _user(user_id: int = 7):
@@ -45,12 +62,33 @@ def _user(user_id: int = 7):
 
 
 @pytest.mark.asyncio
-async def test_check_words_loads_all_owned_cards_in_one_batch_query():
+async def test_check_words_offloads_result_building_to_worker_thread(monkeypatch):
+    session = AsyncMock()
+    session.execute.return_value = _RowsResult([_hit(1, "cheval", "cheval")])
+    called = []
+
+    async def run_in_thread(function, *args):
+        called.append(function.__name__)
+        return function(*args)
+
+    monkeypatch.setattr(cards_api.asyncio, "to_thread", run_in_thread)
+
+    await check_card_words(
+        CardWordSearchRequest(words=["cheval"]),
+        session,
+        _user(),
+    )
+
+    assert called == ["build_word_search_results"]
+
+
+@pytest.mark.asyncio
+async def test_check_words_uses_one_owned_lemma_query_and_returns_no_back_content():
     session = AsyncMock()
     session.execute.return_value = _RowsResult(
         [
-            (_card(1, "le cheval", deck_id=1), "French A"),
-            (_card(2, "mangeaient", deck_id=2), "French B"),
+            _hit(1, "cheval", "cheval", deck_name="French A"),
+            _hit(2, "mangeaient", "manger", deck_id=2, deck_name="French B"),
         ]
     )
 
@@ -61,40 +99,33 @@ async def test_check_words_loads_all_owned_cards_in_one_batch_query():
     )
 
     assert session.execute.await_count == 1
+    statement = session.execute.call_args.args[0]
+    sql = str(statement.compile(dialect=dialect()))
+    assert "cards.front_lemma IN" in sql
+    assert "decks.user_id" in sql
+    assert "cards.back_content" not in sql
     assert response.deck_name is None
     assert [result.has_match for result in response.results] == [True, True]
     assert [result.match_count for result in response.results] == [1, 1]
     assert [result.matches_truncated for result in response.results] == [False, False]
     assert response.results[0].matches[0].card_id == 1
+    assert response.results[0].matches[0].match_type == "lemma"
     assert response.results[0].matches[0].deck_name == "French A"
     assert response.results[1].matches[0].card_id == 2
+    assert not hasattr(response.results[1].matches[0], "back_content")
 
 
-@pytest.mark.asyncio
-async def test_check_words_supports_phrase_lemma_matching():
-    session = AsyncMock()
-    session.execute.return_value = _RowsResult(
-        [(_card(1, "Elle prend soin de lui."), "French")]
-    )
-
-    response = await check_card_words(
-        CardWordSearchRequest(words=["prendre soin de"]),
-        session,
-        _user(),
-    )
-
-    result = response.results[0]
-    assert result.has_match is True
-    assert result.match_count == 1
-    assert result.matches[0].matched_form == "prend soin de"
-    assert result.matches[0].match_type == "lemma"
+@pytest.mark.parametrize("query", ["prendre soin de", "cheval,chat", "**cheval**"])
+def test_check_words_request_rejects_non_word_candidates(query: str):
+    with pytest.raises(ValidationError, match="one word"):
+        CardWordSearchRequest(words=[query])
 
 
 @pytest.mark.asyncio
 async def test_check_words_caps_examples_but_preserves_match_count():
     session = AsyncMock()
     session.execute.return_value = _RowsResult(
-        [(_card(card_id, "cheval"), "French") for card_id in range(1, 7)]
+        [_hit(card_id, "cheval", "cheval") for card_id in range(1, 7)]
     )
 
     response = await check_card_words(
@@ -116,7 +147,7 @@ async def test_check_words_scopes_cards_to_one_named_deck():
     deck = Deck(id=4, user_id=7, name="French")
     session.execute.side_effect = [
         _ScalarsResult([deck]),
-        _RowsResult([(_card(1, "cheval", deck_id=4), "French")]),
+        _RowsResult([_hit(1, "cheval", "cheval", deck_id=4)]),
     ]
 
     response = await check_card_words(
@@ -126,6 +157,10 @@ async def test_check_words_scopes_cards_to_one_named_deck():
     )
 
     assert session.execute.await_count == 2
+    statement = session.execute.call_args.args[0]
+    sql = str(statement.compile(dialect=dialect()))
+    assert "decks.user_id" in sql
+    assert "cards.deck_id" in sql
     assert response.deck_name == "French"
     assert response.results[0].has_match is True
     assert response.results[0].matches[0].deck_id == 4
@@ -169,20 +204,20 @@ async def test_check_words_returns_not_found_for_unknown_deck_name():
 
 
 def test_check_words_request_rejects_blank_values():
-    with pytest.raises(ValueError, match="blank"):
+    with pytest.raises(ValidationError, match="blank"):
         CardWordSearchRequest(words=[" "])
 
 
 def test_check_words_request_rejects_blank_deck_name():
-    with pytest.raises(ValueError, match="blank"):
+    with pytest.raises(ValidationError, match="blank"):
         CardWordSearchRequest(words=["cheval"], deck_name=" ")
 
 
 def test_check_words_request_rejects_oversized_terms():
-    with pytest.raises(ValueError, match="64"):
+    with pytest.raises(ValidationError, match="64"):
         CardWordSearchRequest(words=["a" * 65])
 
 
-def test_check_words_request_rejects_terms_without_letters_or_numbers():
-    with pytest.raises(ValueError, match="letter or number"):
+def test_check_words_request_rejects_text_without_a_word():
+    with pytest.raises(ValidationError, match="one word"):
         CardWordSearchRequest(words=["!!!"])
