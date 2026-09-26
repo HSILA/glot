@@ -3,6 +3,7 @@ Cards API endpoints.
 
 Endpoints:
     GET  /cards          - List all cards (with filters)
+    POST /cards/check-words - Check candidate words against existing cards
     GET  /cards/due      - Get cards due for review
     GET  /cards/{id}     - Get a single card
     POST /cards          - Create a new card
@@ -12,6 +13,7 @@ Endpoints:
     GET  /cards/{id}/preview - Preview next intervals without reviewing
 """
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Annotated
 
@@ -22,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
 from app.core.app_config import get_app_config
+from app.core.french_word import prepare_search_word
 from app.dependencies import (
     get_async_session,
     get_current_user,
@@ -33,10 +36,19 @@ from app.schemas import (
     CardListResponse,
     CardRead,
     CardUpdate,
+    CardWordSearchMatch,
+    CardWordSearchRequest,
+    CardWordSearchResponse,
+    CardWordSearchResult,
     NextStatesResponse,
 )
 from app.schemas.card import ReviewRequest, ReviewResponse
 from app.services import FSRSService
+from app.services.card_word_search import (
+    CardWordSearchHit,
+    build_word_search_results,
+    build_word_search_statement,
+)
 from app.services.review_queue import order_due_cards
 
 router = APIRouter()
@@ -146,6 +158,90 @@ async def list_cards(
     items = result.scalars().all()
 
     return CardListResponse(items=items, total=total, limit=limit, offset=offset)
+
+
+async def _get_unique_owned_deck_id(
+    session: AsyncSession,
+    deck_name: str,
+    user_id: int,
+) -> int:
+    """Resolve one owned deck name without choosing between duplicates."""
+    result = await session.execute(
+        select(Deck).where(Deck.user_id == user_id, Deck.name == deck_name)
+    )
+    decks = result.scalars().all()
+
+    if not decks:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    if len(decks) > 1:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Deck name is ambiguous",
+        )
+
+    deck_id = decks[0].id
+    if deck_id is None:
+        raise HTTPException(status_code=404, detail="Deck not found")
+    return deck_id
+
+
+@router.post("/check-words", response_model=CardWordSearchResponse)
+async def check_card_words(
+    request: CardWordSearchRequest,
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+):
+    """Check candidate French words against existing card front content."""
+    user_id = current_user.id
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Invalid user")
+
+    deck_id = None
+    if request.deck_name is not None:
+        deck_id = await _get_unique_owned_deck_id(
+            session,
+            request.deck_name,
+            user_id,
+        )
+
+    search_words = [prepare_search_word(word) for word in request.words]
+    cards_query = build_word_search_statement(
+        [word.lemma for word in search_words],
+        user_id=user_id,
+        deck_id=deck_id,
+    )
+    result = await session.execute(cards_query)
+    hit_rows = result.mappings().all()
+    word_results = await asyncio.to_thread(
+        build_word_search_results,
+        search_words,
+        (CardWordSearchHit(**row) for row in hit_rows),
+    )
+    return CardWordSearchResponse(
+        deck_name=request.deck_name,
+        results=[
+            CardWordSearchResult(
+                query=word_result.query,
+                normalized_query=word_result.normalized_query,
+                lemma=word_result.lemma,
+                has_match=word_result.match_count > 0,
+                match_count=word_result.match_count,
+                matches_truncated=word_result.matches_truncated,
+                matches=[
+                    CardWordSearchMatch(
+                        card_id=match.card_id,
+                        deck_id=match.deck_id,
+                        deck_name=match.deck_name,
+                        front_content=match.front_content,
+                        matched_form=match.matched_form,
+                        match_type=match.match_type,
+                    )
+                    for match in word_result.matches
+                ],
+            )
+            for word_result in word_results
+        ],
+    )
 
 
 @router.get("/due", response_model=list[CardRead])
@@ -302,9 +398,7 @@ async def update_card(
         # If moving decks, assign a new sequence in the target deck.
         if int(update_data["deck_id"]) != int(card.deck_id):
             await session.execute(
-                select(Deck)
-                .where(Deck.id == target_deck.id)
-                .with_for_update()
+                select(Deck).where(Deck.id == target_deck.id).with_for_update()
             )
             next_sequence_query = select(
                 func.coalesce(func.max(Card.sequence), 0) + 1
@@ -383,7 +477,9 @@ async def review_card(
     """
     card = await _get_owned_card(session, card_id, current_user.id)
     if not card:
-        logger.warning(f"Review attempted on non-existent or unauthorized card {card_id}")
+        logger.warning(
+            f"Review attempted on non-existent or unauthorized card {card_id}"
+        )
         raise HTTPException(status_code=404, detail="Card not found")
 
     # Capture state BEFORE review for logging
