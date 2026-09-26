@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/HSILA/glot/compare/v0.3.5...v0.4.0) (2026-09-26)
+
+
+### Features
+
+* **backend:** add indexed single-word card search ([#125](https://github.com/HSILA/glot/issues/125)) ([e5ab1f8](https://github.com/HSILA/glot/commit/e5ab1f84151fef935268f370a4c92d6c8896d875))
+
+
+### Bug Fixes
+
+* **backend:** report true app version in health endpoint ([#123](https://github.com/HSILA/glot/issues/123)) ([9ec3eae](https://github.com/HSILA/glot/commit/9ec3eae4b5fbdbe4c7fc524ca3760a0d07a63eb7))
+
 ## [0.3.5](https://github.com/HSILA/glot/compare/v0.3.4...v0.3.5) (2026-09-23)
 
 
