@@ -334,8 +334,13 @@ async def create_card(
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
-    # Lock deck row to avoid sequence races when multiple cards are created concurrently.
-    await session.execute(select(Deck).where(Deck.id == deck.id).with_for_update())
+    # Lock the deck row: serializes sequence allocation and blocks racing deck
+    # deletion, so a deck removed mid-request cannot receive new cards.
+    locked_deck = await session.execute(
+        select(Deck).where(Deck.id == deck.id).with_for_update()
+    )
+    if locked_deck.scalar_one_or_none() is None:
+        raise HTTPException(status_code=404, detail="Deck not found")
 
     next_sequence_query = select(func.coalesce(func.max(Card.sequence), 0) + 1).where(
         Card.deck_id == deck.id
@@ -398,9 +403,11 @@ async def update_card(
 
         # If moving decks, assign a new sequence in the target deck.
         if int(update_data["deck_id"]) != int(card.deck_id):
-            await session.execute(
+            locked_deck = await session.execute(
                 select(Deck).where(Deck.id == target_deck.id).with_for_update()
             )
+            if locked_deck.scalar_one_or_none() is None:
+                raise HTTPException(status_code=404, detail="Deck not found")
             next_sequence_query = select(
                 func.coalesce(func.max(Card.sequence), 0) + 1
             ).where(Card.deck_id == target_deck.id)

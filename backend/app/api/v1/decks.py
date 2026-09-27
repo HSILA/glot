@@ -210,7 +210,6 @@ async def update_deck(
     deck.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(deck)
-    await session.commit()
 
     now = datetime.now(UTC)
     stats_subq = _deck_stats_subquery(now=now, deck_id=deck_id)
@@ -229,6 +228,9 @@ async def update_deck(
 
     row = result.first()
     cards_count, new_count, due_count, last_studied_at = row
+
+    # Commit last so the update and the stats read stay in one transaction.
+    await session.commit()
 
     return _deck_read_with_stats(
         deck=deck,
@@ -249,10 +251,15 @@ async def delete_deck(
 
     Fails with 409 while the deck still has cards: cards cannot outlive their
     deck (deck_id is required), so they must be deleted or moved first.
+
+    The deck row is locked so a concurrent card insert cannot slip in between
+    the emptiness check and the delete.
     """
 
     result = await session.execute(
-        select(Deck).where(Deck.id == deck_id, Deck.user_id == current_user.id)
+        select(Deck)
+        .where(Deck.id == deck_id, Deck.user_id == current_user.id)
+        .with_for_update()
     )
     deck = result.scalar_one_or_none()
     if not deck:

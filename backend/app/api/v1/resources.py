@@ -588,6 +588,9 @@ async def confirm_upload(
     finally:
         doc.close()
 
+    # Refresh inside the transaction: a post-commit refresh would open a new
+    # transaction that lingers until dependency teardown.
+    await session.refresh(resource)
     await session.commit()
 
     # Staging cleanup is best-effort and runs only after the commit, so a
@@ -604,7 +607,6 @@ async def confirm_upload(
             exc,
         )
 
-    await session.refresh(resource)
     return _build_resource_read(resource, user_resource, current_user.id)
 
 
@@ -866,9 +868,11 @@ async def update_resource(
         resource.is_public = request.is_public
 
     await session.flush()
-    await session.commit()
+    # Refresh inside the transaction: a post-commit refresh would open a new
+    # transaction that lingers until dependency teardown.
     await session.refresh(resource)
     await session.refresh(user_resource)
+    await session.commit()
 
     return _build_resource_read(resource, user_resource, current_user.id)
 

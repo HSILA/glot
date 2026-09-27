@@ -256,6 +256,7 @@ async def refresh_tokens(
     if token_record.expires_at < datetime.now(UTC):
         # Token expired - delete it and force re-login
         await session.delete(token_record)
+        await session.commit()
         _clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -266,6 +267,7 @@ async def refresh_tokens(
     user = await session.get(User, token_record.user_id)
     if not user or not user.is_active:
         await session.delete(token_record)
+        await session.commit()
         _clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
