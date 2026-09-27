@@ -8,7 +8,7 @@ Content hash (SHA-256) ensures deduplication at storage level.
 from datetime import datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, Column, Index, text
+from sqlalchemy import Boolean, Column, ForeignKey, Index, Integer, text
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
@@ -140,8 +140,14 @@ class PageExtraction(SQLModel, table=True):
 
     # Link to resource
     resource_id: int = Field(
-        foreign_key="resources.id",
-        index=True,
+        sa_column=Column(
+            Integer,
+            # Extraction rows are derived data: they have no meaning once
+            # their resource is gone, so deleting a resource cascades.
+            ForeignKey("resources.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
         description="Parent resource",
     )
 
