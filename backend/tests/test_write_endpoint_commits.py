@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import TextClause
 from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.cards import delete_card
@@ -112,7 +113,9 @@ async def test_delete_deck_commits_when_empty() -> None:
 @pytest.mark.asyncio
 async def test_delete_resource_commits_before_storage_cleanup() -> None:
     events: list[str] = []
-    resource, link, session = _deletable_resource_session([_scalar(0), _scalar(0)])
+    resource, link, session = _deletable_resource_session(
+        [_scalar(0), Mock(), _scalar(0)]
+    )
     session.commit.side_effect = lambda: events.append("commit")
     storage = Mock()
     storage.async_delete_file = AsyncMock(
@@ -129,6 +132,8 @@ async def test_delete_resource_commits_before_storage_cleanup() -> None:
     session.delete.assert_any_await(link)
     session.delete.assert_any_await(resource)
     session.commit.assert_awaited_once()
+    executed = [call.args[0] for call in session.execute.await_args_list]
+    assert any(isinstance(statement, TextClause) for statement in executed)
     assert events and events[0] == "commit"
     assert "storage" in events
 
@@ -136,7 +141,7 @@ async def test_delete_resource_commits_before_storage_cleanup() -> None:
 @pytest.mark.asyncio
 async def test_delete_resource_skips_shared_storage_when_hash_reused() -> None:
     """A re-uploaded hash keeps its content-addressed objects."""
-    _, _, session = _deletable_resource_session([_scalar(0), _scalar(1)])
+    _, _, session = _deletable_resource_session([_scalar(0), Mock(), _scalar(1)])
     storage = Mock()
     storage.async_delete_file = AsyncMock()
     storage.async_delete_processed_folder = AsyncMock()

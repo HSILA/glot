@@ -23,7 +23,7 @@ from typing import Annotated, NoReturn
 import fitz  # PyMuPDF
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from PIL import Image
-from sqlalchemy import delete, func
+from sqlalchemy import delete, func, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import col, select
@@ -543,6 +543,14 @@ async def confirm_upload(
             "Uploaded file is not a valid PDF",
         )
 
+    # Serialize with deletion cleanup for this content hash. The purge path
+    # takes the same advisory lock while it re-checks hash references, so a
+    # promote cannot be overtaken by a concurrent purge of these objects.
+    await session.execute(
+        text("SELECT pg_advisory_xact_lock(hashtextextended(:content_hash, 0))"),
+        {"content_hash": resource.content_hash},
+    )
+
     try:
         # Promote the exact bytes that passed validation. Client upload URLs
         # never target this final content-addressed key.
@@ -883,6 +891,14 @@ async def _purge_deleted_resource_storage(
     """
     if was_confirmed:
         try:
+            # Serialize with upload confirmation for this hash: confirm_upload
+            # holds the same advisory lock across its promote and commit, so
+            # this reference check plus the purge below cannot overtake a
+            # promote. The lock is held until the session transaction ends.
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(hashtextextended(:content_hash, 0))"),
+                {"content_hash": content_hash},
+            )
             still_referenced = (
                 await session.execute(
                     select(func.count())
