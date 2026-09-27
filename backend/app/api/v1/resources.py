@@ -865,6 +865,64 @@ async def update_resource(
     return _build_resource_read(resource, user_resource, current_user.id)
 
 
+async def _purge_deleted_resource_storage(
+    session: AsyncSession,
+    storage: StorageService,
+    *,
+    resource_id: int,
+    content_hash: str,
+    was_confirmed: bool,
+) -> None:
+    """Best-effort storage cleanup after a resource deletion is committed.
+
+    Runs only after the DB commit so a failed commit cannot remove stored
+    files while the row survives. Content-addressed objects are shared by
+    hash, so they are kept while any resource row still references the same
+    hash (a concurrent upload may have reused it). Individual failures are
+    logged; the database state is already final.
+    """
+    if was_confirmed:
+        try:
+            still_referenced = (
+                await session.execute(
+                    select(func.count())
+                    .select_from(Resource)
+                    .where(Resource.content_hash == content_hash)
+                )
+            ).scalar() or 0
+        except Exception as exc:
+            still_referenced = 1
+            logging.warning(
+                "Could not verify hash reuse for deleted resource %s: %s",
+                resource_id,
+                exc,
+            )
+        if still_referenced:
+            return
+        deletions = [
+            storage.async_delete_file(content_hash, folder="raw"),
+            storage.async_delete_file(content_hash, folder="thumbnails"),
+            storage.async_delete_processed_folder(content_hash),
+        ]
+    else:
+        deletions = [
+            storage.async_delete_file(
+                _staging_upload_key(resource_id),
+                folder=None,
+            )
+        ]
+
+    for deletion in deletions:
+        try:
+            await deletion
+        except Exception as exc:
+            logging.warning(
+                "Failed to remove stored files for deleted resource %s: %s",
+                resource_id,
+                exc,
+            )
+
+
 @router.delete("/{resource_id}", status_code=204)
 async def delete_resource(
     resource_id: int,
@@ -927,22 +985,13 @@ async def delete_resource(
     if purge_storage:
         # Storage cleanup is best-effort and runs only after the DB commit:
         # a failed commit must not remove stored files while the row stays.
-        try:
-            if was_confirmed:
-                await storage.async_delete_file(content_hash, folder="raw")
-                await storage.async_delete_file(content_hash, folder="thumbnails")
-                await storage.async_delete_processed_folder(content_hash)
-            else:
-                await storage.async_delete_file(
-                    _staging_upload_key(resource_id),
-                    folder=None,
-                )
-        except Exception as exc:
-            logging.warning(
-                "Failed to remove stored files for deleted resource %s: %s",
-                resource_id,
-                exc,
-            )
+        await _purge_deleted_resource_storage(
+            session,
+            storage,
+            resource_id=resource_id,
+            content_hash=content_hash,
+            was_confirmed=was_confirmed,
+        )
 
 
 @router.get("/{resource_id}/download")
