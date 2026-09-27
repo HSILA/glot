@@ -128,6 +128,7 @@ async def register(
 
     await session.flush()
     await session.refresh(user)
+    await session.commit()
 
     logger.info(f"New user registered: {user.email} (id={user.id})")
 
@@ -197,6 +198,7 @@ async def login(
         + timedelta(days=auth_config.refresh_token_expire_days),
     )
     session.add(refresh_token_record)
+    await session.commit()
 
     # Set cookies
     _set_auth_cookies(response, access_token, refresh_token, auth_config)
@@ -254,6 +256,7 @@ async def refresh_tokens(
     if token_record.expires_at < datetime.now(UTC):
         # Token expired - delete it and force re-login
         await session.delete(token_record)
+        await session.commit()
         _clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -264,6 +267,7 @@ async def refresh_tokens(
     user = await session.get(User, token_record.user_id)
     if not user or not user.is_active:
         await session.delete(token_record)
+        await session.commit()
         _clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -287,6 +291,7 @@ async def refresh_tokens(
         + timedelta(days=auth_config.refresh_token_expire_days),
     )
     session.add(new_token_record)
+    await session.commit()
 
     # Set new cookies
     _set_auth_cookies(response, new_access_token, new_refresh_token, auth_config)
@@ -320,6 +325,8 @@ async def logout(
         if token_record:
             await session.delete(token_record)
 
+    await session.commit()
+
     _clear_auth_cookies(response)
 
     logger.info(f"User logged out: {current_user.email}")
@@ -345,6 +352,8 @@ async def logout_all_devices(
 
     for token in tokens:
         await session.delete(token)
+
+    await session.commit()
 
     _clear_auth_cookies(response)
 
@@ -383,6 +392,7 @@ async def change_password(
 
     # Update password (always uses Argon2)
     current_user.password_hash = hash_password(password_data.new_password)
+    await session.commit()
 
     logger.info(f"Password changed for user: {current_user.email}")
 
@@ -453,6 +463,7 @@ async def revoke_device(
 
     device_name = token.device_name or "Unknown device"
     await session.delete(token)
+    await session.commit()
 
     logger.info(f"Device revoked for user {current_user.email}: {device_name}")
 

@@ -6,6 +6,7 @@ import fitz
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import TextClause
 from sqlalchemy.exc import IntegrityError
 
 from app.api.v1.resources import confirm_upload, request_upload, trigger_extraction
@@ -626,3 +627,48 @@ async def test_thumbnail_storage_failure_does_not_reject_valid_pdf():
     )
 
     assert response.page_count == 1
+
+
+@pytest.mark.asyncio
+async def test_confirm_upload_takes_hash_lock_before_promote():
+    """The promote is serialized with deletion cleanup via the hash lock."""
+    payload = make_pdf()
+    resource = Resource(
+        id=1,
+        content_hash=hashlib.sha256(payload).hexdigest(),
+        size_bytes=len(payload),
+        upload_confirmed=False,
+        file_name="document.pdf",
+        uploaded_by=1,
+    )
+    user_resource = UserResource(user_id=1, resource_id=1, name="Document")
+    user = User(id=1, email="user@example.com", password_hash="hash")
+    result = Mock()
+    result.scalar_one_or_none.return_value = user_resource
+    order: list[str] = []
+
+    async def fake_execute(*args, **kwargs):
+        if isinstance(args[0], TextClause):
+            order.append("lock")
+        return result
+
+    session = AsyncMock()
+    session.get.return_value = resource
+    session.execute.side_effect = fake_execute
+    session.refresh = AsyncMock()
+    storage = Mock()
+    storage.async_download_file_bounded = AsyncMock(return_value=payload)
+    storage.async_file_exists = AsyncMock(return_value=True)
+    storage.async_upload_file = AsyncMock(
+        side_effect=lambda *args, **kwargs: order.append("promote")
+    )
+    storage.async_delete_file = AsyncMock()
+
+    await confirm_upload(
+        resource_id=1,
+        session=session,
+        current_user=user,
+        storage=storage,
+    )
+
+    assert order == ["lock", "promote"]
