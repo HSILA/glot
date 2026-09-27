@@ -64,5 +64,6 @@ async def update_settings(
     settings.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(settings)
+    await session.commit()
 
     return settings

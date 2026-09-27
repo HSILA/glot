@@ -311,6 +311,7 @@ async def request_upload(
 
             existing_resource.uploaded_at = datetime.now(UTC)
             await session.flush()
+            await session.commit()
 
             upload_url = storage.generate_upload_url(
                 _staging_upload_key(existing_resource.id),
@@ -343,6 +344,7 @@ async def request_upload(
         )
         session.add(user_resource)
         await session.flush()
+        await session.commit()
 
         return UploadResponse(
             upload_url="",
@@ -386,6 +388,7 @@ async def request_upload(
     )
     session.add(user_resource)
     await session.flush()
+    await session.commit()
 
     # Clients write only to a per-resource staging key. Confirmed bytes are
     # promoted by the backend to the immutable content-addressed raw key.
@@ -574,19 +577,25 @@ async def confirm_upload(
         except Exception as e:
             logging.warning(f"Failed to generate thumbnail for {resource_id}: {e}")
 
-        try:
-            await storage.async_delete_file(
-                _staging_upload_key(resource.id),
-                folder=None,
-            )
-        except Exception as exc:
-            logging.warning(
-                "Failed to delete confirmed staging object %s: %s",
-                resource.id,
-                exc,
-            )
     finally:
         doc.close()
+
+    await session.commit()
+
+    # Staging cleanup is best-effort and runs only after the commit, so a
+    # failed commit leaves the staged bytes in place for a retry.
+    try:
+        await storage.async_delete_file(
+            _staging_upload_key(resource.id),
+            folder=None,
+        )
+    except Exception as exc:
+        logging.warning(
+            "Failed to delete confirmed staging object %s: %s",
+            resource.id,
+            exc,
+        )
+
     await session.refresh(resource)
     return _build_resource_read(resource, user_resource, current_user.id)
 
@@ -800,6 +809,7 @@ async def add_public_resource(
     )
     session.add(user_resource)
     await session.flush()
+    await session.commit()
 
     return _build_resource_read(resource, user_resource, current_user.id)
 
@@ -893,6 +903,10 @@ async def delete_resource(
     await session.delete(user_resource)
     await session.flush()
 
+    purge_storage = False
+    content_hash = resource.content_hash
+    was_confirmed = resource.upload_confirmed
+
     # Check if owner and no other users have it
     if resource.uploaded_by == current_user.id:
         other_users = await session.execute(
@@ -903,19 +917,32 @@ async def delete_resource(
         other_count = other_users.scalar() or 0
 
         if other_count == 0:
-            if resource.upload_confirmed:
-                content_hash = resource.content_hash
+            # Delete from database; page extraction rows are derived data and
+            # are removed by the ON DELETE CASCADE on page_extractions.resource_id.
+            await session.delete(resource)
+            purge_storage = True
+
+    await session.commit()
+
+    if purge_storage:
+        # Storage cleanup is best-effort and runs only after the DB commit:
+        # a failed commit must not remove stored files while the row stays.
+        try:
+            if was_confirmed:
                 await storage.async_delete_file(content_hash, folder="raw")
                 await storage.async_delete_file(content_hash, folder="thumbnails")
                 await storage.async_delete_processed_folder(content_hash)
             else:
                 await storage.async_delete_file(
-                    _staging_upload_key(resource.id),
+                    _staging_upload_key(resource_id),
                     folder=None,
                 )
-
-            # Delete from database
-            await session.delete(resource)
+        except Exception as exc:
+            logging.warning(
+                "Failed to remove stored files for deleted resource %s: %s",
+                resource_id,
+                exc,
+            )
 
 
 @router.get("/{resource_id}/download")

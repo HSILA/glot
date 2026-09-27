@@ -175,6 +175,7 @@ async def create_deck(
     session.add(deck)
     await session.flush()
     await session.refresh(deck)
+    await session.commit()
 
     # Return with stats (all zeros for new deck)
     return _deck_read_with_stats(
@@ -209,6 +210,7 @@ async def update_deck(
     deck.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(deck)
+    await session.commit()
 
     now = datetime.now(UTC)
     stats_subq = _deck_stats_subquery(now=now, deck_id=deck_id)
@@ -243,9 +245,10 @@ async def delete_deck(
     session: Annotated[AsyncSession, Depends(get_async_session)],
     current_user: Annotated[User, Depends(get_current_user)],
 ):
-    """Delete a deck.
+    """Delete an empty deck.
 
-    Note: Cards in this deck will have their deck_id set to null.
+    Fails with 409 while the deck still has cards: cards cannot outlive their
+    deck (deck_id is required), so they must be deleted or moved first.
     """
 
     result = await session.execute(
@@ -255,4 +258,16 @@ async def delete_deck(
     if not deck:
         raise HTTPException(status_code=404, detail="Deck not found")
 
+    card_count = (
+        await session.execute(
+            select(func.count()).select_from(Card).where(Card.deck_id == deck_id)
+        )
+    ).scalar() or 0
+    if card_count:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Deck has {card_count} cards. Delete or move them first.",
+        )
+
     await session.delete(deck)
+    await session.commit()

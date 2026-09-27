@@ -354,6 +354,7 @@ async def create_card(
     session.add(card)
     await session.flush()
     await session.refresh(card)
+    await session.commit()
     logger.info(f"Created card {card.id} (seq={card.sequence})")
     return card
 
@@ -413,6 +414,7 @@ async def update_card(
     card.updated_at = datetime.now(UTC)
     await session.flush()
     await session.refresh(card)
+    await session.commit()
     return card
 
 
@@ -428,6 +430,7 @@ async def delete_card(
         raise HTTPException(status_code=404, detail="Card not found")
 
     await session.delete(card)
+    await session.commit()
 
 
 @router.get("/{card_id}/preview", response_model=NextStatesResponse)
@@ -505,6 +508,7 @@ async def review_card(
 
     await session.flush()
     await session.refresh(card)
+    await session.commit()
 
     # Get next states for response
     next_states = fsrs.get_next_states_response(card)
