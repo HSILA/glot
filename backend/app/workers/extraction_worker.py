@@ -23,7 +23,7 @@ from datetime import timedelta
 import fitz  # PyMuPDF
 from loguru import logger
 from PIL import Image
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, text
 
 from app.agents import ExtractionAgent
 from app.api.v1.resources import UPLOAD_URL_EXPIRES_SECONDS, _staging_upload_key
@@ -747,10 +747,9 @@ async def sweep_expired_uploads(ctx: dict):
        transient delete failure at confirm time can leave it behind. These are
        always safe to delete once the original URL window has fully passed.
 
-    The raw/ + thumbnail content-addressed objects are intentionally left alone
-    here: they are keyed by content hash and reused by any future upload of the
-    same content, so they are not pure garbage and require a reference-count
-    check before deletion (tracked as a follow-up).
+    Content-addressed objects promoted before a failed confirmation commit are
+    deleted after the reservation rows are committed, but only when no resource
+    row still references their hash.
 
     Runs once at worker startup (cronless - no periodic DB polling).
     """
@@ -780,6 +779,7 @@ async def sweep_expired_uploads(ctx: dict):
             expired = result.scalars().all()
 
             swept = 0
+            swept_hashes: set[str] = set()
             for resource in expired:
                 # A confirm starting just before us holds the row lock, so it
                 # is skipped here; re-check to avoid racing on the refreshed row.
@@ -805,9 +805,78 @@ async def sweep_expired_uploads(ctx: dict):
                 )
                 await session.delete(resource)
                 swept += 1
+                swept_hashes.add(resource.content_hash)
                 logger.info(f"Swept expired upload reservation {resource.id}")
 
             await session.commit()
+
+            # Clean content-addressed objects only after the reservation rows
+            # are committed. Serialize with confirmation/deletion cleanup and
+            # re-check references while holding the per-hash advisory lock.
+            for content_hash in swept_hashes:
+                try:
+                    await session.execute(
+                        text(
+                            "SELECT pg_advisory_xact_lock("
+                            "hashtextextended(:content_hash, 0))"
+                        ),
+                        {"content_hash": content_hash},
+                    )
+                    still_referenced = (
+                        await session.execute(
+                            select(func.count())
+                            .select_from(Resource)
+                            .where(Resource.content_hash == content_hash)
+                        )
+                    ).scalar() or 0
+                    if not still_referenced:
+                        try:
+                            await storage.async_delete_file(
+                                content_hash, folder="raw"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to clean content objects for "
+                                f"{content_hash}: {e}"
+                            )
+                        try:
+                            await storage.async_delete_file(
+                                content_hash, folder="thumbnails"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to clean content objects for "
+                                f"{content_hash}: {e}"
+                            )
+                        try:
+                            await storage.async_delete_processed_folder(
+                                content_hash
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"Failed to clean content objects for "
+                                f"{content_hash}: {e}"
+                            )
+                except Exception as e:
+                    logger.warning(
+                        f"Failed to check content references for "
+                        f"{content_hash}: {e}"
+                    )
+                finally:
+                    try:
+                        await session.commit()
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to release content cleanup lock for "
+                            f"{content_hash}: {e}"
+                        )
+                        try:
+                            await session.rollback()
+                        except Exception as rollback_error:
+                            logger.warning(
+                                f"Failed to roll back content cleanup for "
+                                f"{content_hash}: {rollback_error}"
+                            )
 
             # 2. Clean leftover staging objects on CONFIRMED resources by
             #    enumerating what actually exists in storage (the source of

@@ -12,7 +12,7 @@ Covers:
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, call
 
 import pytest
 
@@ -244,9 +244,16 @@ def _result(values) -> Mock:
     return r
 
 
+def _scalar_result(value) -> Mock:
+    r = Mock()
+    r.scalar.return_value = value
+    return r
+
+
 def _storage(list_keys=None):
     storage = Mock()
     storage.async_delete_file = AsyncMock()
+    storage.async_delete_processed_folder = AsyncMock()
     storage.async_list_object_keys = AsyncMock(
         return_value=list_keys or []
     )
@@ -261,15 +268,18 @@ def _sweep_session(executes):
     step-2 batched id-resolution query).
     """
     session = AsyncMock()
-    session.execute.side_effect = [_result(v) for v in executes]
+    session.execute.side_effect = [
+        value if isinstance(value, Mock) else _result(value)
+        for value in executes
+    ]
     return session
 
 
 @pytest.mark.asyncio
 async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> None:
     resource = _unconfirmed_upload()
-    # Executes: step-1 candidate select, then delete(UserResource) for the sweep.
-    session = _sweep_session([[resource], []])
+    # Executes: candidate select, UserResource delete, advisory lock, ref count.
+    session = _sweep_session([[resource], [], [], _scalar_result(0)])
     storage = _storage()  # no leftover staging objects
 
     monkeypatch.setattr(
@@ -281,11 +291,140 @@ async def test_sweep_expired_uploads_reclaims_abandoned_uploads(monkeypatch) -> 
     outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
 
     assert outcome == {"swept": 1, "staging_cleaned": 0}
-    # Staging object reclaimed, rows removed, and the lock transaction commits
-    # (even when step 2 finds nothing) so FOR UPDATE locks are released.
-    storage.async_delete_file.assert_awaited_once_with("uploads/41.pdf", folder=None)
+    # Staging and unreferenced content objects are reclaimed after rows commit.
+    assert storage.async_delete_file.await_args_list == [
+        call("uploads/41.pdf", folder=None),
+        call(resource.content_hash, folder="raw"),
+        call(resource.content_hash, folder="thumbnails"),
+    ]
+    storage.async_delete_processed_folder.assert_awaited_once_with(
+        resource.content_hash
+    )
     session.delete.assert_awaited_once_with(resource)
     session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_keeps_referenced_content(monkeypatch) -> None:
+    resource = _unconfirmed_upload()
+    # Another resource still references the same content hash.
+    referenced = _unconfirmed_upload(resource_id=42)
+    referenced.upload_confirmed = True
+    session = _sweep_session([[resource], [], [], _scalar_result(1)])
+    storage = _storage()
+
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 1, "staging_cleaned": 0}
+    storage.async_delete_file.assert_awaited_once_with(
+        "uploads/41.pdf", folder=None
+    )
+    storage.async_delete_processed_folder.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_content_cleanup_failure_is_best_effort(
+    monkeypatch,
+) -> None:
+    first = _unconfirmed_upload(resource_id=41)
+    second = _unconfirmed_upload(resource_id=42)
+    second.content_hash = "c" * 64
+    session = _sweep_session(
+        [
+            [first, second],
+            [],
+            [],
+            [],
+            _scalar_result(0),
+            [],
+            _scalar_result(0),
+        ]
+    )
+    storage = _storage()
+
+    async def delete_file(key, folder="raw"):
+        if key == first.content_hash and folder == "raw":
+            raise RuntimeError("R2 unavailable")
+
+    storage.async_delete_file.side_effect = delete_file
+    warning = Mock()
+    monkeypatch.setattr(extraction_worker.logger, "warning", warning)
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert outcome == {"swept": 2, "staging_cleaned": 0}
+    storage.async_delete_file.assert_any_await(
+        second.content_hash, folder="raw"
+    )
+    storage.async_delete_processed_folder.assert_any_await(second.content_hash)
+    assert any(first.content_hash in str(call) for call in warning.call_args_list)
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_locks_and_counts_before_content_delete(
+    monkeypatch,
+) -> None:
+    resource = _unconfirmed_upload()
+    events = []
+    session = AsyncMock()
+
+    async def execute(statement, params=None):
+        sql = str(statement)
+        if "FOR UPDATE" in sql:
+            return _result([resource])
+        if sql.startswith("DELETE"):
+            return _result([])
+        if "pg_advisory_xact_lock" in sql:
+            events.append(("lock", params))
+            return _result([])
+        events.append(("count", None))
+        return _scalar_result(0)
+
+    session.execute.side_effect = execute
+
+    async def commit():
+        events.append(("commit", None))
+
+    session.commit.side_effect = commit
+    storage = _storage()
+
+    async def delete_file(key, folder="raw"):
+        if folder in {"raw", "thumbnails"}:
+            events.append((f"delete-{folder}", key))
+
+    async def delete_processed_folder(key):
+        events.append(("delete-processed", key))
+
+    storage.async_delete_file.side_effect = delete_file
+    storage.async_delete_processed_folder.side_effect = delete_processed_folder
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    assert events == [
+        ("commit", None),
+        ("lock", {"content_hash": resource.content_hash}),
+        ("count", None),
+        ("delete-raw", resource.content_hash),
+        ("delete-thumbnails", resource.content_hash),
+        ("delete-processed", resource.content_hash),
+        ("commit", None),
+    ]
 
 
 @pytest.mark.asyncio
@@ -411,6 +550,91 @@ async def test_sweep_expired_uploads_skips_on_staging_delete_failure(monkeypatch
     assert outcome == {"swept": 0, "staging_cleaned": 0}
     session.delete.assert_not_awaited()
     session.commit.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_lock_failure_skips_content_cleanup(
+    monkeypatch,
+) -> None:
+    resource = _unconfirmed_upload()
+    events = []
+    session = AsyncMock()
+
+    async def execute(statement, params=None):
+        sql = str(statement)
+        if "FOR UPDATE" in sql:
+            return _result([resource])
+        if sql.startswith("DELETE"):
+            return _result([])
+        if "pg_advisory_xact_lock" in sql:
+            events.append(("lock", params))
+            raise RuntimeError("advisory lock unavailable")
+        events.append(("count", None))
+        return _scalar_result(0)
+
+    session.execute.side_effect = execute
+    storage = _storage()
+    warning = Mock()
+    monkeypatch.setattr(extraction_worker.logger, "warning", warning)
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    # A failed reference check (outer except) must skip the content deletes
+    # without aborting the sweep: only the staging object is touched.
+    assert outcome == {"swept": 1, "staging_cleaned": 0}
+    assert events == [("lock", {"content_hash": resource.content_hash})]
+    assert storage.async_delete_file.await_args_list == [
+        call("uploads/41.pdf", folder=None)
+    ]
+    storage.async_delete_processed_folder.assert_not_awaited()
+    assert any(resource.content_hash in str(c) for c in warning.call_args_list)
+    # Row commit plus the lock-releasing commit in the finally block.
+    assert session.commit.await_count >= 2
+
+
+@pytest.mark.asyncio
+async def test_sweep_expired_uploads_excludes_failed_hash_from_content_cleanup(
+    monkeypatch,
+) -> None:
+    first = _unconfirmed_upload(resource_id=41)  # staging delete will fail
+    second = _unconfirmed_upload(resource_id=42)
+    second.content_hash = "c" * 64
+    # Executes: candidate select, one UserResource delete (second only),
+    # then advisory lock + ref count for the swept hash.
+    session = _sweep_session([[first, second], [], [], _scalar_result(0)])
+    storage = _storage()
+
+    async def delete_file(key, folder="raw"):
+        if key == "uploads/41.pdf":
+            raise RuntimeError("R2 unavailable")
+
+    storage.async_delete_file.side_effect = delete_file
+    monkeypatch.setattr(
+        extraction_worker,
+        "async_session_factory",
+        _FakeSessionFactory(session),
+    )
+
+    outcome = await extraction_worker.sweep_expired_uploads(_startup_ctx(storage))
+
+    # The failed reservation stays behind and its hash is never cleaned; the
+    # content cleanup only touches the successfully swept hash.
+    assert outcome == {"swept": 1, "staging_cleaned": 0}
+    calls = storage.async_delete_file.await_args_list
+    assert call("uploads/41.pdf", folder=None) in calls  # attempted, failed
+    assert call("uploads/42.pdf", folder=None) in calls
+    assert call(second.content_hash, folder="raw") in calls
+    assert call(second.content_hash, folder="thumbnails") in calls
+    assert not any(c.args and c.args[0] == first.content_hash for c in calls)
+    storage.async_delete_processed_folder.assert_awaited_once_with(
+        second.content_hash
+    )
+    session.delete.assert_awaited_once_with(second)
 
 
 def test_sweep_expired_uploads_is_wired_at_startup() -> None:
