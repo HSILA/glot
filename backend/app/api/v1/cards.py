@@ -633,6 +633,10 @@ async def review_card(
                 request_id=review.request_id,
                 fingerprint=fingerprint,
                 card_id=card_id,
+                # Placeholder: NOT NULL is enforced per statement, and the
+                # completed snapshot is written in this same transaction, so
+                # an incomplete receipt can never become visible.
+                response_json={},
             )
             .on_conflict_do_nothing(constraint="ux_review_submissions_user_request")
             .returning(ReviewSubmission.id)
