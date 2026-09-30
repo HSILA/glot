@@ -150,9 +150,16 @@ export function createDefaultOutboxStorage(): OutboxStorage {
   return new MemoryOutboxStorage();
 }
 
+/** A tracked operation plus whether it is known to be in durable storage. */
+interface MirrorEntry {
+  op: PendingReview;
+  /** True once the op is known to be persisted (write succeeded or recovered). */
+  persisted: boolean;
+}
+
 export class ReviewOutbox {
   /** Every staged op, kept for this page's lifetime regardless of storage. */
-  private readonly mirror = new Map<string, PendingReview>();
+  private readonly mirror = new Map<string, MirrorEntry>();
 
   constructor(private readonly storage: OutboxStorage) {}
 
@@ -162,9 +169,13 @@ export class ReviewOutbox {
    * to this page.
    */
   async stage(op: PendingReview): Promise<{ durable: boolean }> {
-    this.mirror.set(op.request_id, op);
+    const entry: MirrorEntry = { op, persisted: false };
+    this.mirror.set(op.request_id, entry);
     try {
       await this.storage.put(op);
+      // The write landed: a later successful scan that does not list this op
+      // means another surface completed it.
+      entry.persisted = true;
       return { durable: true };
     } catch {
       return { durable: false };
@@ -190,7 +201,10 @@ export class ReviewOutbox {
    * could not be read and the result comes from the mirror alone. Callers
    * must not treat a failed scan as proof that an operation is gone.
    * Operations recovered from storage are retained in the mirror, so this
-   * page keeps knowing about them for its lifetime.
+   * page keeps knowing about them for its lifetime; a successful scan
+   * reconciles the mirror against storage — persisted operations it no
+   * longer lists (completed elsewhere) are forgotten, while operations
+   * whose durable write failed are kept.
    */
   async pendingForUser(userId: number): Promise<PendingScan> {
     let stored: PendingReview[] = [];
@@ -202,11 +216,25 @@ export class ReviewOutbox {
       durableRead = false;
     }
 
-    for (const op of stored) this.mirror.set(op.request_id, op);
+    if (durableRead) {
+      // A persisted entry this user's storage no longer lists was completed
+      // on another surface — stop tracking it. An entry whose write never
+      // reached storage stays: only this page knows about it, and absence
+      // from storage proves nothing about it.
+      const storedIds = new Set(stored.map((op) => op.request_id));
+      for (const [id, entry] of this.mirror) {
+        if (entry.op.user_id === userId && entry.persisted && !storedIds.has(id)) {
+          this.mirror.delete(id);
+        }
+      }
+      for (const op of stored) {
+        this.mirror.set(op.request_id, { op, persisted: true });
+      }
+    }
 
     const merged = new Map<string, PendingReview>();
-    for (const op of this.mirror.values()) {
-      if (op.user_id === userId) merged.set(op.request_id, op);
+    for (const entry of this.mirror.values()) {
+      if (entry.op.user_id === userId) merged.set(entry.op.request_id, entry.op);
     }
 
     return {

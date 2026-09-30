@@ -32,13 +32,19 @@ function makeOp(overrides: Partial<PendingReview> = {}): PendingReview {
   };
 }
 
-/** Memory storage whose durable reads can be switched to failing. */
+/** Memory storage whose durable reads and writes can be switched to failing. */
 class ToggleReadStorage extends MemoryOutboxStorage {
   failReads = false;
+  failWrites = false;
 
   override async listForUser(userId: number): Promise<PendingReview[]> {
     if (this.failReads) throw new Error("storage read failed");
     return super.listForUser(userId);
+  }
+
+  override async put(op: PendingReview): Promise<void> {
+    if (this.failWrites) throw new Error("storage write failed");
+    return super.put(op);
   }
 }
 
@@ -135,6 +141,38 @@ describe("ReviewOutbox", () => {
     const second = await outbox.pendingForUser(7);
     expect(second.durableRead).toBe(false);
     expect(second.ops.map((op) => op.request_id)).toEqual(["old-1"]);
+  });
+
+  test("a completion on another surface is reconciled away by a successful scan", async () => {
+    const storage = new MemoryOutboxStorage();
+    await storage.put(makeOp({ request_id: "old-1" }));
+    const outbox = new ReviewOutbox(storage);
+
+    // Recover it once so the mirror tracks it.
+    const first = await outbox.pendingForUser(7);
+    expect(first.ops.map((op) => op.request_id)).toEqual(["old-1"]);
+
+    // Another tab completes it and removes the durable record.
+    await storage.remove("old-1");
+
+    const second = await outbox.pendingForUser(7);
+    expect(second.durableRead).toBe(true);
+    expect(second.ops).toEqual([]);
+  });
+
+  test("an operation whose durable write failed survives reconciliation", async () => {
+    const storage = new ToggleReadStorage();
+    const outbox = new ReviewOutbox(storage);
+
+    storage.failWrites = true;
+    const staged = await outbox.stage(makeOp({ request_id: "unwritten" }));
+    expect(staged.durable).toBe(false);
+
+    // A successful scan must not reconcile it away: storage never had it.
+    storage.failWrites = false;
+    const scan = await outbox.pendingForUser(7);
+    expect(scan.durableRead).toBe(true);
+    expect(scan.ops.map((op) => op.request_id)).toEqual(["unwritten"]);
   });
 });
 
