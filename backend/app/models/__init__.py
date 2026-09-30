@@ -8,6 +8,7 @@ Models:
 - Deck: User-owned card organization
 - Card: The core flashcard entity with scheduling fields
 - ReviewLog: Historical review data for algorithm optimization
+- ReviewSubmission: Idempotency receipts for review submissions
 - Resource: Global resource storage with content-based deduplication
 - UserResource: Junction table linking users to resources
 
@@ -26,6 +27,7 @@ from .deck import Deck
 from .refresh_token import RefreshToken
 from .resource import ExtractionStatus, PageExtraction, PageStatus, Resource
 from .review_log import ReviewLog
+from .review_submission import ReviewSubmission
 from .settings import UserSettings
 from .user import User
 from .user_resource import UserResource
@@ -38,6 +40,7 @@ __all__ = [
     "Card",
     "CardState",
     "ReviewLog",
+    "ReviewSubmission",
     "Resource",
     "ExtractionStatus",
     "PageExtraction",

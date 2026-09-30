@@ -33,6 +33,7 @@ def _read_with_meta(meta: dict) -> CardRead:
             "state": "new",
             "reps": 0,
             "lapses": 0,
+            "review_version": 0,
             "last_review_at": None,
             "next_review_at": None,
             "created_at": "2025-01-01T00:00:00Z",
