@@ -1,0 +1,245 @@
+/**
+ * Durable outbox for review submissions.
+ *
+ * A review never goes to the network until its idempotency key (and the
+ * frozen payload) is persisted locally first. That ordering is what makes
+ * retries safe: if the response is lost — flaky connection, app killed
+ * mid-request — the staged operation can be re-sent later with the same
+ * `request_id`, and the server answers from the recorded receipt instead of
+ * applying the rating twice.
+ *
+ * Storage is pluggable and always guarded: IndexedDB is used in the browser,
+ * an in-memory fallback covers private-browsing modes and tests. When a
+ * durable write fails, `stage` reports `{ durable: false }` so the caller can
+ * degrade honestly (retry still works for this page, but not after a reload).
+ *
+ * A memory mirror keeps every staged operation — and every operation
+ * recovered from durable storage — visible for the page's lifetime, even
+ * when a later storage read fails.
+ */
+
+export type OutboxRating = 1 | 2 | 3 | 4;
+
+export interface PendingReview {
+  /** Client-generated idempotency key; stable across retries of one intent. */
+  request_id: string;
+  user_id: number;
+  card_id: number;
+  rating: OutboxRating;
+  /** Frozen with the payload: retries must present identical values. */
+  review_duration_ms: number;
+  expected_review_version: number | null;
+  /** Session scope at staging time (null = mixed review). */
+  scope_deck_id: number | null;
+  created_at: number;
+}
+
+export interface OutboxStorage {
+  listForUser(userId: number): Promise<PendingReview[]>;
+  put(op: PendingReview): Promise<void>;
+  remove(requestId: string): Promise<void>;
+}
+
+/** Result of a pending scan; `durableRead` is false when storage was unreadable. */
+export interface PendingScan {
+  ops: PendingReview[];
+  durableRead: boolean;
+}
+
+/** In-memory storage. Used in tests and as the last-resort fallback. */
+export class MemoryOutboxStorage implements OutboxStorage {
+  private readonly items = new Map<string, PendingReview>();
+
+  async listForUser(userId: number): Promise<PendingReview[]> {
+    return [...this.items.values()].filter((op) => op.user_id === userId);
+  }
+
+  async put(op: PendingReview): Promise<void> {
+    this.items.set(op.request_id, op);
+  }
+
+  async remove(requestId: string): Promise<void> {
+    this.items.delete(requestId);
+  }
+}
+
+const DB_NAME = "glot-review-outbox";
+const DB_VERSION = 1;
+const STORE = "reviews";
+const USER_INDEX = "by_user";
+
+/**
+ * IndexedDB-backed storage. Every method rejects on failure; the outbox
+ * translates that into the non-durable (degraded) signal.
+ */
+export class IndexedDbOutboxStorage implements OutboxStorage {
+  private dbPromise: Promise<IDBDatabase> | null = null;
+
+  constructor(private readonly factory: IDBFactory) {}
+
+  private open(): Promise<IDBDatabase> {
+    if (!this.dbPromise) {
+      const promise = new Promise<IDBDatabase>((resolve, reject) => {
+        const request = this.factory.open(DB_NAME, DB_VERSION);
+        request.onupgradeneeded = () => {
+          const db = request.result;
+          if (!db.objectStoreNames.contains(STORE)) {
+            const store = db.createObjectStore(STORE, { keyPath: "request_id" });
+            store.createIndex(USER_INDEX, "user_id", { unique: false });
+          }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error ?? new Error("IndexedDB open failed"));
+      });
+      this.dbPromise = promise.catch((error) => {
+        // Allow a later attempt to reopen (e.g. after the user grants storage).
+        this.dbPromise = null;
+        throw error;
+      });
+    }
+    return this.dbPromise;
+  }
+
+  private async run<T>(
+    mode: IDBTransactionMode,
+    makeRequest: (store: IDBObjectStore) => IDBRequest<T>,
+  ): Promise<T> {
+    const db = await this.open();
+    return new Promise<T>((resolve, reject) => {
+      const transaction = db.transaction(STORE, mode);
+      let result: T | undefined;
+
+      const request = makeRequest(transaction.objectStore(STORE));
+      request.onsuccess = () => {
+        result = request.result;
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error("IndexedDB request failed"));
+      };
+      // Resolve only when the transaction COMMITS: a write that has not
+      // committed can still abort, and a lost idempotency key must never
+      // look durable.
+      transaction.oncomplete = () => resolve(result as T);
+      transaction.onabort = () => {
+        reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+      };
+      transaction.onerror = () => {
+        reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+      };
+    });
+  }
+
+  async listForUser(userId: number): Promise<PendingReview[]> {
+    return this.run("readonly", (store) => store.index(USER_INDEX).getAll(userId));
+  }
+
+  async put(op: PendingReview): Promise<void> {
+    await this.run("readwrite", (store) => store.put(op));
+  }
+
+  async remove(requestId: string): Promise<void> {
+    await this.run("readwrite", (store) => store.delete(requestId));
+  }
+}
+
+/** Pick IndexedDB when available; otherwise a memory store. */
+export function createDefaultOutboxStorage(): OutboxStorage {
+  if (typeof indexedDB !== "undefined") {
+    return new IndexedDbOutboxStorage(indexedDB);
+  }
+  return new MemoryOutboxStorage();
+}
+
+/** A tracked operation plus whether it is known to be in durable storage. */
+interface MirrorEntry {
+  op: PendingReview;
+  /** True once the op is known to be persisted (write succeeded or recovered). */
+  persisted: boolean;
+}
+
+export class ReviewOutbox {
+  /** Every staged op, kept for this page's lifetime regardless of storage. */
+  private readonly mirror = new Map<string, MirrorEntry>();
+
+  constructor(private readonly storage: OutboxStorage) {}
+
+  /**
+   * Persist an operation before it is sent. Returns whether the write is
+   * durable (survives a reload); `false` means retry protection is limited
+   * to this page.
+   */
+  async stage(op: PendingReview): Promise<{ durable: boolean }> {
+    const entry: MirrorEntry = { op, persisted: false };
+    this.mirror.set(op.request_id, entry);
+    try {
+      await this.storage.put(op);
+      // The write landed: a later successful scan that does not list this op
+      // means another surface completed it.
+      entry.persisted = true;
+      return { durable: true };
+    } catch {
+      return { durable: false };
+    }
+  }
+
+  /** Remove an operation after a definitive outcome. */
+  async complete(requestId: string): Promise<void> {
+    this.mirror.delete(requestId);
+    try {
+      await this.storage.remove(requestId);
+    } catch {
+      // A leftover entry only costs one replayed request on a later visit;
+      // the server's receipt makes that harmless.
+    }
+  }
+
+  /**
+   * All staged operations for a user, oldest first, merging durable storage
+   * with the in-memory mirror.
+   *
+   * `durableRead` reports whether the durable scan ran: false means storage
+   * could not be read and the result comes from the mirror alone. Callers
+   * must not treat a failed scan as proof that an operation is gone.
+   * Operations recovered from storage are retained in the mirror, so this
+   * page keeps knowing about them for its lifetime; a successful scan
+   * reconciles the mirror against storage — persisted operations it no
+   * longer lists (completed elsewhere) are forgotten, while operations
+   * whose durable write failed are kept.
+   */
+  async pendingForUser(userId: number): Promise<PendingScan> {
+    let stored: PendingReview[] = [];
+    let durableRead = true;
+    try {
+      stored = await this.storage.listForUser(userId);
+    } catch {
+      // Fall through to the mirror; the scan is degraded, not empty.
+      durableRead = false;
+    }
+
+    if (durableRead) {
+      // A persisted entry this user's storage no longer lists was completed
+      // on another surface — stop tracking it. An entry whose write never
+      // reached storage stays: only this page knows about it, and absence
+      // from storage proves nothing about it.
+      const storedIds = new Set(stored.map((op) => op.request_id));
+      for (const [id, entry] of this.mirror) {
+        if (entry.op.user_id === userId && entry.persisted && !storedIds.has(id)) {
+          this.mirror.delete(id);
+        }
+      }
+      for (const op of stored) {
+        this.mirror.set(op.request_id, { op, persisted: true });
+      }
+    }
+
+    const merged = new Map<string, PendingReview>();
+    for (const entry of this.mirror.values()) {
+      if (entry.op.user_id === userId) merged.set(entry.op.request_id, entry.op);
+    }
+
+    return {
+      ops: [...merged.values()].sort((a, b) => a.created_at - b.created_at),
+      durableRead,
+    };
+  }
+}

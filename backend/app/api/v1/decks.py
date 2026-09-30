@@ -104,6 +104,8 @@ async def list_decks(
         )
         .outerjoin(stats_subq, stats_subq.c.deck_id == Deck.id)
         .where(Deck.user_id == current_user.id)
+        # Deterministic ordering so paginated deck listings are stable.
+        .order_by(Deck.id.asc())
         .offset(offset)
         .limit(limit)
     )

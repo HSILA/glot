@@ -18,6 +18,22 @@ jobs:
     name: Backend checks
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # PostgreSQL backs the integration tests in backend/tests/integration
+    # (picked up via TEST_DATABASE_URL); migrations are smoke-checked too.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: glot_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     env:
       JWT_SECRET: ci-test-jwt-secret
       R2_ACCOUNT_ID: test-account
@@ -25,6 +41,8 @@ jobs:
       R2_SECRET_ACCESS_KEY: test-secret
       R2_BUCKET_NAME: test-bucket
       OPENROUTER_API_KEY: test-openrouter-key
+      TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/glot_test
+      DATABASE_URL_SYNC: postgresql+psycopg2://postgres:postgres@localhost:5432/glot_test
     defaults:
       run:
         working-directory: backend
@@ -49,6 +67,12 @@ jobs:
 
       - name: Lint backend
         run: uv run --locked ruff check .
+
+      - name: Check migrations apply cleanly
+        run: |
+          uv run --locked alembic upgrade head
+          uv run --locked alembic downgrade -1
+          uv run --locked alembic upgrade head
 
       - name: Test backend
         run: uv run --locked pytest

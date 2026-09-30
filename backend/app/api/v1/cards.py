@@ -5,6 +5,8 @@ Endpoints:
     GET  /cards          - List all cards (with filters)
     POST /cards/check-words - Check candidate words against existing cards
     GET  /cards/due      - Get cards due for review
+    GET  /cards/due/summary - Study-eligible counts for one scope
+    GET  /cards/due/batch - Next due batch plus scope counts
     GET  /cards/{id}     - Get a single card
     POST /cards          - Create a new card
     PUT  /cards/{id}     - Update a card
@@ -14,12 +16,14 @@ Endpoints:
 """
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from loguru import logger
-from sqlalchemy import case, func
+from sqlalchemy import func, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
@@ -30,7 +34,7 @@ from app.dependencies import (
     get_current_user,
     get_user_settings,
 )
-from app.models import Card, CardState, Deck, ReviewLog, User
+from app.models import Card, CardState, Deck, ReviewLog, ReviewSubmission, User
 from app.schemas import (
     CardCreate,
     CardListResponse,
@@ -40,6 +44,8 @@ from app.schemas import (
     CardWordSearchRequest,
     CardWordSearchResponse,
     CardWordSearchResult,
+    DueBatchResponse,
+    DueSummary,
     NextStatesResponse,
 )
 from app.schemas.card import ReviewRequest, ReviewResponse
@@ -48,6 +54,11 @@ from app.services.card_word_search import (
     CardWordSearchHit,
     build_word_search_results,
     build_word_search_statement,
+)
+from app.services.due_cards import (
+    StudyScopeCounts,
+    fetch_due_batch,
+    fetch_study_counts,
 )
 from app.services.review_queue import order_due_cards
 
@@ -78,6 +89,63 @@ async def _get_owned_card(
         .where(Card.id == card_id, Deck.user_id == user_id)
     )
     return result.scalar_one_or_none()
+
+
+async def _get_owned_card_for_update(
+    session: AsyncSession,
+    card_id: int,
+    user_id: int,
+) -> Card | None:
+    """Get an owned card with its row locked for the duration of the review.
+
+    The lock serializes concurrent reviews of the same card (two devices, or a
+    retry racing its original request) so scheduling and review_version update
+    from a consistent snapshot.
+    """
+    result = await session.execute(
+        select(Card)
+        .join(Deck, Card.deck_id == Deck.id)
+        .where(Card.id == card_id, Deck.user_id == user_id)
+        .with_for_update(of=Card)
+    )
+    return result.scalar_one_or_none()
+
+
+def _review_fingerprint(
+    card_id: int, rating: int, review_duration_ms: int | None
+) -> str:
+    """Stable hash of the fields that define one review submission.
+
+    The client freezes all of these when it stages the operation, so a retry
+    with the same request_id must present identical values; anything else is
+    key reuse and is rejected.
+    """
+    duration = review_duration_ms if review_duration_ms is not None else ""
+    return hashlib.sha256(f"{card_id}:{rating}:{duration}".encode()).hexdigest()
+
+
+def _due_summary_read(
+    counts: StudyScopeCounts, *, as_of: datetime, deck_id: int | None
+) -> DueSummary:
+    """Map service counts onto the API schema."""
+    return DueSummary(
+        scheduled_due_count=counts.scheduled_due_count,
+        new_count=counts.new_count,
+        total=counts.total,
+        as_of=as_of,
+        deck_id=deck_id,
+    )
+
+
+async def _validate_scope_deck(
+    session: AsyncSession, scope_deck_id: int | None, user_id: int
+) -> None:
+    """Validate an optional summary scope deck (404 when missing/not owned)."""
+    if scope_deck_id is None:
+        return
+    deck = await _get_owned_deck(session, scope_deck_id, user_id)
+    if not deck:
+        raise HTTPException(status_code=404, detail="Deck not found")
 
 
 async def get_fsrs_service_from_db(
@@ -246,6 +314,7 @@ async def check_card_words(
 
 @router.get("/due", response_model=list[CardRead])
 async def get_due_cards(
+    response: Response,
     session: Annotated[AsyncSession, Depends(get_async_session)],
     current_user: Annotated[User, Depends(get_current_user)],
     limit: int = Query(20, ge=1, le=100),
@@ -267,42 +336,94 @@ async def get_due_cards(
     Presentation order is non-sequential: learning/relearning come first, then
     review and new cards are shuffled and interleaved so the queue does not
     follow a fixed deterministic order. Pass `seed` for a stable order.
+
+    The session page prefers `/due/batch`, which returns the same cards plus
+    the scope counts; this endpoint is kept for compatibility.
     """
     if deck_id is not None:
         deck = await _get_owned_deck(session, deck_id, current_user.id)
         if not deck:
             raise HTTPException(status_code=404, detail="Deck not found")
 
-    now = datetime.now(UTC)
-
-    query = (
-        select(Card)
-        .join(Deck, Card.deck_id == Deck.id)
-        .where(
-            Deck.user_id == current_user.id,
-            (Card.next_review_at <= now) | (Card.state == CardState.NEW),
-        )
+    cards, _counts = await fetch_due_batch(
+        session,
+        user_id=current_user.id,
+        as_of=datetime.now(UTC),
+        limit=limit,
+        deck_id=deck_id,
     )
 
-    if deck_id:
-        query = query.where(Card.deck_id == deck_id)
+    response.headers["Cache-Control"] = "no-store"
+    return order_due_cards(cards, seed=seed)
 
-    # Priority for which cards make the `limit` cut: learning/relearning first,
-    # then due reviews, then new. Within a tier, most-overdue first so we never
-    # randomly drop overdue cards. Presentation order is randomised afterwards.
-    priority = case(
-        (Card.state.in_((CardState.LEARNING, CardState.RELEARNING)), 0),
-        (Card.state == CardState.REVIEW, 1),
-        else_=2,
+
+@router.get("/due/summary", response_model=DueSummary)
+async def get_due_summary(
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    deck_id: int | None = None,
+):
+    """
+    Study-eligible counts for one scope (all decks, or a single deck).
+
+    This is the authoritative "how many cards are waiting" number: the study
+    session header displays it, and the dashboard uses the same computation
+    for its "cards to study" figure, so the two surfaces cannot disagree.
+    """
+    if deck_id is not None:
+        deck = await _get_owned_deck(session, deck_id, current_user.id)
+        if not deck:
+            raise HTTPException(status_code=404, detail="Deck not found")
+
+    as_of = datetime.now(UTC)
+    counts = await fetch_study_counts(
+        session, user_id=current_user.id, as_of=as_of, deck_id=deck_id
     )
-    query = query.order_by(
-        priority.asc(), Card.next_review_at.asc().nullsfirst()
-    ).limit(limit)
+    response.headers["Cache-Control"] = "no-store"
+    return _due_summary_read(counts, as_of=as_of, deck_id=deck_id)
 
-    result = await session.execute(query)
-    due_cards = result.scalars().all()
 
-    return order_due_cards(due_cards, seed=seed)
+@router.get("/due/batch", response_model=DueBatchResponse)
+async def get_due_batch(
+    response: Response,
+    session: Annotated[AsyncSession, Depends(get_async_session)],
+    current_user: Annotated[User, Depends(get_current_user)],
+    limit: int = Query(100, ge=1, le=100),
+    deck_id: int | None = None,
+    seed: int | None = Query(
+        None,
+        description="Optional RNG seed for a stable queue order across requests. "
+        "Omit to randomise the order on every request.",
+    ),
+):
+    """
+    The next batch of due cards plus companion scope counts.
+
+    Items and counts come from a single SQL snapshot, so the client can keep
+    fetching batches until `items` is empty and trust that an empty batch with
+    `summary.total == 0` is the only truthful "nothing left to review" signal.
+    """
+    if deck_id is not None:
+        deck = await _get_owned_deck(session, deck_id, current_user.id)
+        if not deck:
+            raise HTTPException(status_code=404, detail="Deck not found")
+
+    as_of = datetime.now(UTC)
+    cards, counts = await fetch_due_batch(
+        session,
+        user_id=current_user.id,
+        as_of=as_of,
+        limit=limit,
+        deck_id=deck_id,
+    )
+
+    response.headers["Cache-Control"] = "no-store"
+    return DueBatchResponse(
+        items=order_due_cards(cards, seed=seed),
+        summary=_due_summary_read(counts, as_of=as_of, deck_id=deck_id),
+        limit=limit,
+    )
 
 
 @router.get("/{card_id}", response_model=CardRead)
@@ -483,14 +604,127 @@ async def review_card(
     This will:
     1. Log the review to ReviewLog (for future optimizer training)
     2. Update the card's FSRS scheduling (difficulty, stability, next_review_at)
-    3. Return the updated card and next possible intervals
+    3. Bump review_version and return the updated card, the next possible
+       intervals, and fresh scope counts for the session header
+
+    Idempotency: when `request_id` is supplied, the first accepted submission
+    for that key records the review and stores its response; a retry of the
+    same key (lost response, flaky connection, resumed outbox) returns the
+    stored response with `replayed=true` and never applies the rating twice.
+    `expected_review_version` — the version the client saw when the card was
+    loaded — rejects a stale submission with 409 instead of overwriting newer
+    scheduling made elsewhere. `scope_deck_id`, when supplied, scopes the
+    returned summary to one deck (the session's deck mode).
     """
-    card = await _get_owned_card(session, card_id, current_user.id)
+    user_id = current_user.id
+
+    if review.request_id is not None:
+        fingerprint = _review_fingerprint(
+            card_id, review.rating, review.review_duration_ms
+        )
+        # Claim the key first. ON CONFLICT DO NOTHING waits for a concurrent
+        # in-flight insert of the same key to resolve, so a retry racing its
+        # original request either wins the claim cleanly or, below, reads the
+        # committed receipt.
+        claim = await session.execute(
+            pg_insert(ReviewSubmission)
+            .values(
+                user_id=user_id,
+                request_id=review.request_id,
+                fingerprint=fingerprint,
+                card_id=card_id,
+                # Placeholder: NOT NULL is enforced per statement, and the
+                # completed snapshot is written in this same transaction, so
+                # an incomplete receipt can never become visible.
+                response_json={},
+            )
+            .on_conflict_do_nothing(constraint="ux_review_submissions_user_request")
+            .returning(ReviewSubmission.id)
+        )
+        claimed_id = claim.scalar_one_or_none()
+
+        if claimed_id is None:
+            receipt = (
+                await session.execute(
+                    select(ReviewSubmission).where(
+                        ReviewSubmission.user_id == user_id,
+                        ReviewSubmission.request_id == review.request_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if receipt is None:
+                # The conflicting transaction is still in flight or vanished;
+                # nothing was recorded by this request, so ask for a retry.
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail={
+                        "code": "duplicate_in_flight",
+                        "message": (
+                            "Duplicate submission is being processed; "
+                            "retry shortly."
+                        ),
+                    },
+                )
+            if receipt.fingerprint != fingerprint:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail="request_id was already used for a different review",
+                )
+            # Replay: answer from the stored snapshot (the rating is NOT
+            # applied again) with fresh counts for the session header.
+            stored = ReviewResponse.model_validate(receipt.response_json)
+            await _validate_scope_deck(session, review.scope_deck_id, user_id)
+            as_of = datetime.now(UTC)
+            counts = await fetch_study_counts(
+                session,
+                user_id=user_id,
+                as_of=as_of,
+                deck_id=review.scope_deck_id,
+            )
+            return stored.model_copy(
+                update={
+                    "replayed": True,
+                    "summary": _due_summary_read(
+                        counts, as_of=as_of, deck_id=review.scope_deck_id
+                    ),
+                }
+            )
+
+        await _validate_scope_deck(session, review.scope_deck_id, user_id)
+
+    card = await _get_owned_card_for_update(session, card_id, user_id)
     if not card:
         logger.warning(
             f"Review attempted on non-existent or unauthorized card {card_id}"
         )
         raise HTTPException(status_code=404, detail="Card not found")
+
+    if (
+        review.request_id is not None
+        and review.expected_review_version is not None
+        and card.review_version != review.expected_review_version
+    ):
+        # Another device recorded a review since this card was loaded; applying
+        # this rating would overwrite newer scheduling. Return the fresh card
+        # and counts so the client can reconcile its queue.
+        as_of = datetime.now(UTC)
+        counts = await fetch_study_counts(
+            session, user_id=user_id, as_of=as_of, deck_id=review.scope_deck_id
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "stale_review_version",
+                "message": (
+                    "Card was reviewed elsewhere since it was loaded; "
+                    "refresh the card before rating it again."
+                ),
+                "card": CardRead.model_validate(card).model_dump(mode="json"),
+                "summary": _due_summary_read(
+                    counts, as_of=as_of, deck_id=review.scope_deck_id
+                ).model_dump(mode="json"),
+            },
+        )
 
     # Capture state BEFORE review for logging
     stability_before = card.stability
@@ -499,6 +733,7 @@ async def review_card(
 
     # Apply the review
     card, scheduled_days, elapsed_days = fsrs.apply_review(card, review.rating)
+    card.review_version += 1
 
     # Log the review for optimizer training
     review_log = ReviewLog(
@@ -515,10 +750,44 @@ async def review_card(
 
     await session.flush()
     await session.refresh(card)
-    await session.commit()
 
     # Get next states for response
     next_states = fsrs.get_next_states_response(card)
+
+    summary: DueSummary | None = None
+    if review.request_id is not None:
+        as_of = datetime.now(UTC)
+        counts = await fetch_study_counts(
+            session, user_id=user_id, as_of=as_of, deck_id=review.scope_deck_id
+        )
+        summary = _due_summary_read(counts, as_of=as_of, deck_id=review.scope_deck_id)
+
+    response_payload = ReviewResponse(
+        card=CardRead.model_validate(card),
+        next_states=next_states,
+        message=f"Review recorded: rating={review.rating}",
+        request_id=review.request_id,
+        review_id=review_log.id,
+        replayed=False,
+        summary=summary,
+    )
+
+    if review.request_id is not None:
+        # Complete the receipt in the same transaction as the review itself:
+        # the stored snapshot only becomes visible together with the review.
+        await session.execute(
+            update(ReviewSubmission)
+            .where(
+                ReviewSubmission.user_id == user_id,
+                ReviewSubmission.request_id == review.request_id,
+            )
+            .values(
+                review_log_id=review_log.id,
+                response_json=response_payload.model_dump(mode="json"),
+            )
+        )
+
+    await session.commit()
 
     logger.info(
         f"Card {card_id} reviewed: rating={review.rating}, "
@@ -526,8 +795,4 @@ async def review_card(
         f"stability={card.stability:.2f}"
     )
 
-    return ReviewResponse(
-        card=CardRead.model_validate(card),
-        next_states=next_states,
-        message=f"Review recorded: rating={review.rating}",
-    )
+    return response_payload

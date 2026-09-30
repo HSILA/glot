@@ -13,7 +13,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any
 
-from sqlalchemy import Column, Index, UniqueConstraint, event, inspect, text
+from sqlalchemy import Column, Index, Integer, UniqueConstraint, event, inspect, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.engine import Connection
 from sqlalchemy.orm import Mapper
@@ -133,6 +133,14 @@ class Card(SQLModel, table=True):
         default=0,
         ge=0,
         description="Times forgotten (rated Again)",
+    )
+
+    review_version: int = Field(
+        default=0,
+        ge=0,
+        sa_column=Column(Integer, nullable=False, server_default=text("0")),
+        description="Incremented on every recorded review; stale submissions "
+        "(version mismatch) are rejected so newer scheduling is never overwritten",
     )
 
     # Timestamps

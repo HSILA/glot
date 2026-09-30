@@ -4,14 +4,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/glot/icon";
+import { useAuth } from "@/components/providers/auth-provider";
 import { cn } from "@/lib/utils";
-import { cardsApi, type Card } from "@/lib/api/cards";
-import { decksApi, type Deck } from "@/lib/api/decks";
+import { cardsApi } from "@/lib/api/cards";
+import { decksApi } from "@/lib/api/decks";
 import { readCardMeta } from "@/lib/cards/meta";
 import { CardExample, CardGrammar, CardPhonetic } from "./card-meta-details";
 import { getSessionProgress } from "./session-progress";
-import { advanceQueue, shouldRequeue, type Rating } from "./session-queue";
-import { clearSessionSeed, getOrCreateSessionSeed } from "./session-seed";
+import type { Rating } from "./session-queue";
+import { SessionController, type SessionState } from "./session-controller";
+import { createDefaultOutboxStorage, ReviewOutbox } from "./review-outbox";
+import { clearSessionSeed, getOrCreateSessionSeed, type SeedStorage } from "./session-seed";
 
 const ratingButtons = [
   { label: "Again", rating: 1, shortcut: "1", description: "Retry soon", tone: "bad" as const },
@@ -27,6 +30,17 @@ const TONE_VARS: Record<string, { bg: string; fg: string; border: string }> = {
   info: { bg: "var(--info)", fg: "#0a0a0b", border: "var(--info)" },
 };
 
+const INITIAL_STATE: SessionState = {
+  phase: "loading",
+  queue: [],
+  remaining: null,
+  completed: 0,
+  pendingRetry: null,
+  notice: null,
+  error: null,
+  durabilityDegraded: false,
+};
+
 function parseDeckId(value: string | null): number | undefined {
   if (!value) return undefined;
   const parsed = Number(value);
@@ -37,121 +51,110 @@ function formatContent(value: string): string {
   return value.trim() || "Untitled card";
 }
 
+function getLocalStorage(): SeedStorage | null {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
 export default function SessionPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const deckId = parseDeckId(searchParams.get("deck_id"));
+  const { user } = useAuth();
+  const userId = user?.id;
 
-  // Cards are held in an explicit ordered queue; the head (index 0) is shown.
-  // A failed card is requeued behind the head, so the queue can outlive a
-  // single pass over the loaded cards (see session-queue.ts).
-  const [queue, setQueue] = useState<Card[]>([]);
-  const [decks, setDecks] = useState<Deck[]>([]);
-  const [isFlipped, setIsFlipped] = useState(false);
+  const [session, setSession] = useState<SessionState>(INITIAL_STATE);
+  const [deckNames, setDeckNames] = useState<Map<number, string>>(new Map());
+  // The flip belongs to a specific card id: a card is face-up only while its
+  // own id is the current head, so advancing the queue resets the flip
+  // without needing an effect.
+  const [flippedId, setFlippedId] = useState<number | null>(null);
   const [isAnimating, setIsAnimating] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sessionTotal, setSessionTotal] = useState(0);
-  // Distinct cards passed out of the session. Requeued cards are not counted
-  // until they finally get a passing rating, so progress never overflows.
-  const [completedCount, setCompletedCount] = useState(0);
-  const [startedAt, setStartedAt] = useState<number>(() => Date.now());
-  const isSubmittingRef = useRef(false);
+  const controllerRef = useRef<SessionController | null>(null);
 
-  const currentCard = queue[0];
+  const currentCard = session.queue[0];
+  const isFlipped = currentCard !== undefined && flippedId === currentCard.id;
   const currentMeta = useMemo(() => readCardMeta(currentCard?.meta_data), [currentCard]);
-  const deckById = useMemo(() => new Map(decks.map((deck) => [deck.id, deck])), [decks]);
-  const currentDeck = currentCard?.deck_id ? deckById.get(currentCard.deck_id) : undefined;
-  const { cardNumber, totalCards, progressPercent, estimatedMinutes } = getSessionProgress({
-    sessionTotal,
-    reviewedCount: completedCount,
+  const { progressPercent, estimatedMinutes } = getSessionProgress({
+    remaining: session.remaining,
+    completed: session.completed,
     hasCurrentCard: Boolean(currentCard),
   });
 
-  const loadSession = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    setIsFlipped(false);
-    setSessionTotal(0);
-    setCompletedCount(0);
-    setIsSubmitting(false);
-    isSubmittingRef.current = false;
-
-    try {
-      // Reuse a stable per-session seed so an interrupted session (reload, tab
-      // close) resumes in the same order rather than reshuffling. Scoped per
-      // deck (and mixed review) so switching scopes gets its own order.
-      const seed = getOrCreateSessionSeed(window.localStorage, deckId);
-      const [dueCards, allDecks] = await Promise.all([
-        cardsApi.getDueCards({ deck_id: deckId, limit: 100, seed }),
-        decksApi.listDecks(),
-      ]);
-      setQueue(dueCards);
-      setDecks(allDecks);
-      setSessionTotal(dueCards.length);
-      setStartedAt(Date.now());
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load review session");
-    } finally {
-      setLoading(false);
-    }
-  }, [deckId]);
-
+  // One controller per (user, scope). It owns batch loading, the truthful
+  // count, and retry-safe submissions; the page just renders its state.
   useEffect(() => {
-    void loadSession();
-  }, [loadSession]);
+    if (userId === undefined) return;
 
+    const controller = new SessionController({
+      scope: { userId, deckId },
+      api: cardsApi,
+      outbox: new ReviewOutbox(createDefaultOutboxStorage()),
+      getSeed: () => getOrCreateSessionSeed(getLocalStorage(), userId, deckId),
+      clearSeed: () => clearSessionSeed(getLocalStorage(), userId, deckId),
+      onState: setSession,
+    });
+    controllerRef.current = controller;
+    void controller.start();
+
+    return () => {
+      controller.dispose();
+      controllerRef.current = null;
+    };
+  }, [userId, deckId]);
+
+  // Reconcile pending work and refresh the count when the tab returns to the
+  // foreground (phone unlocked, tab re-focused, restored from bfcache).
   useEffect(() => {
-    // Once the loaded cards are all worked through, the logical session is over,
-    // so drop the seed and let the next session pick a fresh order. Guard on
-    // loading/error: a transient empty queue during a (re)load or after a failed
-    // fetch must not clear a seed an in-progress session still needs.
-    if (loading || error) return;
-    if (queue.length === 0) {
-      clearSessionSeed(window.localStorage, deckId);
-    }
-  }, [loading, error, queue.length, deckId]);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") {
+        void controllerRef.current?.handleResume();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("pageshow", onVisible);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("pageshow", onVisible);
+    };
+  }, []);
 
   const handleFlip = useCallback(() => {
-    if (!currentCard || isAnimating || isSubmitting) return;
+    if (!currentCard || isAnimating || session.phase !== "active") return;
 
     setIsAnimating(true);
-    setIsFlipped((flipped) => !flipped);
+    setFlippedId((flippedFor) => (flippedFor === currentCard.id ? null : currentCard.id));
     window.setTimeout(() => setIsAnimating(false), 300);
-  }, [currentCard, isAnimating, isSubmitting]);
+  }, [currentCard, isAnimating, session.phase]);
+
+  // Keep the answer visible when a submission still needs settling (the
+  // visible card is still the one being retried); otherwise move on to the
+  // next card face-down.
+  const runSessionAction = useCallback(async (action: () => Promise<void> | undefined) => {
+    await action();
+    const controller = controllerRef.current;
+    if (!controller || !controller.getState().pendingRetry) {
+      setFlippedId(null);
+    }
+  }, []);
 
   const handleRate = useCallback(
-    async (rating: Rating) => {
-      if (!currentCard || isSubmittingRef.current) return;
-
-      isSubmittingRef.current = true;
-      setIsSubmitting(true);
-      setError(null);
-      try {
-        // Exactly one review is recorded per rating, even for requeued cards.
-        await cardsApi.reviewCard(currentCard.id, {
-          rating,
-          review_duration_ms: Date.now() - startedAt,
-        });
-
-        // Passing ratings drop the card and advance progress; a failed card is
-        // reinserted later in the queue and does not count as completed yet.
-        setQueue((existingQueue) => advanceQueue(existingQueue, rating));
-        if (!shouldRequeue(rating)) {
-          setCompletedCount((count) => Math.min(count + 1, sessionTotal));
-        }
-        setIsFlipped(false);
-        setStartedAt(Date.now());
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to submit review");
-      } finally {
-        isSubmittingRef.current = false;
-        setIsSubmitting(false);
-      }
-    },
-    [currentCard, sessionTotal, startedAt]
+    (rating: Rating) => runSessionAction(() => controllerRef.current?.rate(rating)),
+    [runSessionAction],
   );
+
+  const handleRetry = useCallback(
+    () => void runSessionAction(() => controllerRef.current?.retryPending()),
+    [runSessionAction],
+  );
+
+  const handleRefresh = useCallback(() => {
+    setFlippedId(null);
+    void controllerRef.current?.refresh();
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -164,17 +167,46 @@ export default function SessionPage() {
         return;
       }
 
-      if (isFlipped) {
+      if (isFlipped && session.phase === "active" && !session.pendingRetry) {
         const button = ratingButtons.find((candidate) => candidate.shortcut === e.key);
-        if (button) void handleRate(button.rating as 1 | 2 | 3 | 4);
+        if (button) void handleRate(button.rating as Rating);
       }
     };
 
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [handleFlip, handleRate, isFlipped]);
+  }, [handleFlip, handleRate, isFlipped, session.phase, session.pendingRetry]);
 
-  const deckName = currentDeck?.name ?? (deckId ? "Selected deck" : "Mixed review");
+  // Deck name for the pill: fetched lazily for the deck(s) actually shown,
+  // instead of loading the full deck list just for a label.
+  const deckIdToShow = currentCard?.deck_id ?? deckId;
+  useEffect(() => {
+    if (deckIdToShow === undefined) return;
+    if (deckNames.has(deckIdToShow)) return;
+
+    let cancelled = false;
+    void decksApi
+      .getDeck(deckIdToShow)
+      .then((deck) => {
+        if (!cancelled) {
+          setDeckNames((previous) => new Map(previous).set(deck.id, deck.name));
+        }
+      })
+      .catch(() => {
+        // The pill falls back to a generic label; not worth a visible error.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deckIdToShow, deckNames]);
+
+  const deckName =
+    (deckIdToShow !== undefined ? deckNames.get(deckIdToShow) : undefined) ??
+    (deckId !== undefined ? "Selected deck" : "Mixed review");
+
+  const showCard = session.queue.length > 0;
+  const ratingsEnabled = session.phase === "active" && !session.pendingRetry;
+  const remainingLabel = session.remaining === null ? "–" : String(session.remaining);
 
   return (
     <div className="h-full min-h-0 -m-4 flex flex-col md:-m-6 lg:-m-8" style={{ background: "var(--bg)" }}>
@@ -194,19 +226,31 @@ export default function SessionPage() {
           </Button>
 
           <div className="flex items-center gap-4">
-            <div className="mono" style={{ fontSize: 12, color: "var(--muted)", letterSpacing: "0.04em" }}>
-              <span style={{ color: "var(--fg)", fontWeight: 600 }}>{String(cardNumber).padStart(2, "0")}</span>
-              <span style={{ color: "var(--line-2)", margin: "0 6px" }}>/</span>
-              <span>{String(totalCards).padStart(2, "0")}</span>
+            <div
+              className="mono"
+              style={{ fontSize: 12, color: "var(--muted)", letterSpacing: "0.04em" }}
+              title="Cards remaining in this session"
+            >
+              <span style={{ color: "var(--fg)", fontWeight: 600 }}>{remainingLabel}</span>
+              <span style={{ color: "var(--line-2)", margin: "0 6px" }}>·</span>
+              <span>left</span>
             </div>
-            <div className="hidden sm:flex items-center gap-1.5" style={{ fontSize: 11, color: "var(--muted)" }}>
-              <Icon name="clock" size={12} />
-              <span className="mono">~{estimatedMinutes}m</span>
-            </div>
+            {session.remaining !== null && session.remaining > 0 ? (
+              <div className="hidden sm:flex items-center gap-1.5" style={{ fontSize: 11, color: "var(--muted)" }}>
+                <Icon name="clock" size={12} />
+                <span className="mono">~{estimatedMinutes}m</span>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex gap-1">
-            <Button variant="ghost" size="icon" aria-label="Refresh session" onClick={loadSession} disabled={loading || isSubmitting}>
+            <Button
+              variant="ghost"
+              size="icon"
+              aria-label="Refresh session"
+              onClick={handleRefresh}
+              disabled={session.phase !== "active" && session.phase !== "exhausted"}
+            >
               <Icon name="arrowU" size={15} />
             </Button>
             <Button
@@ -243,22 +287,26 @@ export default function SessionPage() {
         </div>
 
         <div className="flex-1 flex items-center justify-center px-4 md:px-6 py-10">
-          {loading ? (
+          {session.phase === "loading" ? (
             <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
               <p className="mono" style={{ color: "var(--muted)", letterSpacing: "0.12em" }}>LOADING SESSION</p>
             </div>
-          ) : error ? (
+          ) : session.phase === "error" ? (
             <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
               <p className="mono mb-4" style={{ color: "var(--bad)", letterSpacing: "0.12em" }}>SESSION ERROR</p>
-              <p className="serif mb-6" style={{ color: "var(--fg)", fontSize: 22 }}>{error}</p>
-              <Button onClick={loadSession}>Try again</Button>
+              <p className="serif mb-6" style={{ color: "var(--fg)", fontSize: 22 }}>{session.error}</p>
+              <Button onClick={handleRefresh}>Try again</Button>
             </div>
-          ) : !currentCard ? (
+          ) : session.phase === "exhausted" ? (
             <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
               <p className="mono mb-4" style={{ color: "var(--accent)", letterSpacing: "0.12em" }}>ALL CAUGHT UP</p>
               <h2 className="serif mb-3" style={{ color: "var(--fg)", fontSize: 36 }}>No cards due right now.</h2>
               <p className="mb-6" style={{ color: "var(--muted)" }}>Add new cards or come back when more reviews are scheduled.</p>
               <Button onClick={() => router.push("/decks")}>Back to decks</Button>
+            </div>
+          ) : !showCard ? (
+            <div className="glot-card w-full max-w-2xl p-10 text-center" style={{ background: "var(--surface)" }}>
+              <p className="mono" style={{ color: "var(--muted)", letterSpacing: "0.12em" }}>LOADING NEXT CARDS</p>
             </div>
           ) : (
             <div
@@ -302,7 +350,39 @@ export default function SessionPage() {
 
         <div className="px-4 md:px-6 pb-8 pt-4" style={{ borderTop: "1px solid var(--line)", background: "var(--bg-1)", position: "relative", zIndex: 10 }}>
           <div className="max-w-2xl mx-auto">
-            {currentCard && isFlipped ? (
+            {session.error && session.phase === "active" ? (
+              <div className="mono text-center mb-3" style={{ fontSize: 11, color: "var(--bad)", letterSpacing: "0.04em" }}>
+                {session.error}
+              </div>
+            ) : null}
+            {session.notice && !session.pendingRetry ? (
+              <div className="mono text-center mb-3" style={{ fontSize: 11, color: "var(--muted)", letterSpacing: "0.04em" }}>
+                {session.notice}
+              </div>
+            ) : null}
+            {session.durabilityDegraded && !session.pendingRetry ? (
+              <div className="mono text-center mb-3" style={{ fontSize: 10, color: "var(--muted-2)", letterSpacing: "0.06em" }}>
+                OFFLINE STORAGE UNAVAILABLE — RETRY PROTECTION LIMITED TO THIS TAB
+              </div>
+            ) : null}
+            {showCard && session.pendingRetry ? (
+              <div className="glot-card" style={{ background: "var(--surface)", padding: "16px 18px" }}>
+                <div className="flex items-center gap-4">
+                  <div style={{ flex: 1 }}>
+                    <div className="mono" style={{ fontSize: 10, color: "var(--warn)", letterSpacing: "0.16em", marginBottom: 6 }}>
+                      RATING NOT CONFIRMED
+                    </div>
+                    <p style={{ color: "var(--muted)", fontSize: 13, lineHeight: 1.5 }}>
+                      The connection dropped while saving. The rating is kept safe and will be sent again with the same
+                      id — it cannot be counted twice.
+                    </p>
+                  </div>
+                  <Button onClick={handleRetry} disabled={session.phase === "submitting"}>
+                    Retry now
+                  </Button>
+                </div>
+              </div>
+            ) : showCard && isFlipped ? (
               <>
                 <div className="mono text-center mb-3" style={{ fontSize: 10, color: "var(--muted-2)", letterSpacing: "0.16em" }}>RATE YOUR RECALL</div>
                 <div className="grid grid-cols-4 gap-2">
@@ -313,11 +393,11 @@ export default function SessionPage() {
                         key={btn.label}
                         onClick={(e) => {
                           e.stopPropagation();
-                          void handleRate(btn.rating as 1 | 2 | 3 | 4);
+                          void handleRate(btn.rating as Rating);
                         }}
-                        disabled={isSubmitting}
+                        disabled={!ratingsEnabled}
                         className="focus-glow"
-                        style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: "14px 8px", borderRadius: "var(--radius)", background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`, cursor: isSubmitting ? "wait" : "pointer", fontWeight: 600, opacity: isSubmitting ? 0.7 : 1 }}
+                        style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 2, padding: "14px 8px", borderRadius: "var(--radius)", background: tone.bg, color: tone.fg, border: `1px solid ${tone.border}`, cursor: ratingsEnabled ? "pointer" : "wait", fontWeight: 600, opacity: ratingsEnabled ? 1 : 0.7 }}
                       >
                         <span style={{ fontSize: 14 }}>{btn.label}</span>
                         <span className="mono" style={{ fontSize: 10, opacity: 0.75, letterSpacing: "0.04em" }}>{btn.description}</span>
@@ -327,9 +407,9 @@ export default function SessionPage() {
                   })}
                 </div>
               </>
-            ) : currentCard ? (
+            ) : showCard ? (
               <div className="flex justify-center">
-                <Button size="lg" className="px-12 gap-2" onClick={handleFlip} disabled={isSubmitting}>
+                <Button size="lg" className="px-12 gap-2" onClick={handleFlip} disabled={session.phase !== "active"}>
                   Show answer
                   <kbd className="kbd-only" style={{ background: "rgba(0,0,0,0.15)", color: "inherit", border: "1px solid rgba(0,0,0,0.2)" }}>SPACE</kbd>
                 </Button>

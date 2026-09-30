@@ -5,6 +5,7 @@ Card schemas for API request/response validation.
 from datetime import datetime
 from enum import StrEnum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -118,6 +119,10 @@ class CardRead(BaseModel):
     state: CardState
     reps: int
     lapses: int
+    # Incremented on every recorded review; clients echo it back so a stale
+    # submission from another device is rejected instead of overwriting
+    # newer scheduling.
+    review_version: int
 
     # Timestamps
     last_review_at: datetime | None
@@ -135,6 +140,36 @@ class CardListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+class DueSummary(BaseModel):
+    """Study-eligible counts for one scope (all decks, or one deck).
+
+    ``total`` is the number the session header displays; it must equal the
+    dashboard's "cards to study" number for the same scope. The breakdown is
+    the dashboard's "due" and "new" chips.
+    """
+
+    scheduled_due_count: int = Field(ge=0)
+    new_count: int = Field(ge=0)
+    total: int = Field(ge=0)
+    as_of: datetime
+    deck_id: int | None = Field(
+        default=None, description="Scope: one deck, or all decks when omitted"
+    )
+
+
+class DueBatchResponse(BaseModel):
+    """A batch of due cards plus the scope counts from the same snapshot.
+
+    ``items`` is one page of the study queue; the client keeps fetching until
+    it is empty. Because items and counts come from one SQL snapshot, an empty
+    ``items`` with ``total == 0`` is the only truthful "all caught up" signal.
+    """
+
+    items: list[CardRead]
+    summary: DueSummary
+    limit: int
 
 
 class CardWordSearchRequest(BaseModel):
@@ -206,6 +241,22 @@ class ReviewRequest(BaseModel):
     review_duration_ms: int | None = Field(
         default=None, ge=0, description="Time taken to answer in milliseconds"
     )
+    request_id: UUID | None = Field(
+        default=None,
+        description="Client-generated idempotency key. A retry with the same "
+        "key returns the recorded result instead of applying the rating twice.",
+    )
+    expected_review_version: int | None = Field(
+        default=None,
+        ge=0,
+        description="card.review_version the client saw when the card was "
+        "loaded; a mismatch means another device reviewed the card first (409).",
+    )
+    scope_deck_id: int | None = Field(
+        default=None,
+        description="Deck scope for the returned due summary (the session's "
+        "deck mode); omit for all-decks scope.",
+    )
 
 
 class SchedulingInfo(BaseModel):
@@ -226,8 +277,18 @@ class NextStatesResponse(BaseModel):
 
 
 class ReviewResponse(BaseModel):
-    """Response after reviewing a card."""
+    """Response after reviewing a card.
+
+    ``replayed`` is true when the response was answered from the stored
+    receipt of an earlier submission with the same ``request_id`` (the rating
+    was not applied again). ``summary`` carries fresh scope counts so the
+    session header stays truthful after every acknowledged rating.
+    """
 
     card: CardRead
     next_states: NextStatesResponse
     message: str = "Review recorded successfully"
+    request_id: UUID | None = None
+    review_id: int | None = None
+    replayed: bool = False
+    summary: DueSummary | None = None
