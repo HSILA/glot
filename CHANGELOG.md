@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.0](https://github.com/HSILA/glot/compare/v0.3.5...v0.4.0) (2026-09-30)
+
+
+### Features
+
+* **backend:** add indexed single-word card search ([#125](https://github.com/HSILA/glot/issues/125)) ([e5ab1f8](https://github.com/HSILA/glot/commit/e5ab1f84151fef935268f370a4c92d6c8896d875))
+* **study:** reliable review sessions — batch continuation, truthful counts, idempotent reviews ([#132](https://github.com/HSILA/glot/issues/132)) ([69852d6](https://github.com/HSILA/glot/commit/69852d60fae8023711dc9ad6e3fa7c052aba01a8))
+
+
+### Bug Fixes
+
+* **backend:** commit write endpoints before responding ([#128](https://github.com/HSILA/glot/issues/128)) ([3b5515d](https://github.com/HSILA/glot/commit/3b5515d366545e9e3c7b4ce7ff209b8d932fd88d))
+* **backend:** report true app version in health endpoint ([#123](https://github.com/HSILA/glot/issues/123)) ([9ec3eae](https://github.com/HSILA/glot/commit/9ec3eae4b5fbdbe4c7fc524ca3760a0d07a63eb7))
+* **extraction:** reclaim orphaned content objects in expired upload sweep ([#130](https://github.com/HSILA/glot/issues/130)) ([4dde6e5](https://github.com/HSILA/glot/commit/4dde6e5e6f3c01629efc7937f514faa9531da040))
+
 ## [0.3.5](https://github.com/HSILA/glot/compare/v0.3.4...v0.3.5) (2026-09-23)
 
 
