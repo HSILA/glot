@@ -40,6 +40,9 @@ export function shouldRequeue(rating: Rating): boolean {
  * - A requeue rating (see {@link REQUEUE_RATINGS}) reinserts the head card
  *   `gap` positions back, or at the end of the queue when fewer cards remain,
  *   so it is seen again before the session finishes.
+ * - Pass `replacement` when the card object changed since it was shown (for
+ *   example the updated card returned by the review endpoint): the requeued
+ *   slot then carries the fresh object instead of the stale pre-review one.
  *
  * The input queue is not mutated.
  */
@@ -47,6 +50,7 @@ export function advanceQueue<T>(
   queue: readonly T[],
   rating: Rating,
   gap: number = REQUEUE_GAP,
+  replacement?: T,
 ): T[] {
   if (queue.length === 0) return [];
 
@@ -57,5 +61,6 @@ export function advanceQueue<T>(
   }
 
   const insertAt = Math.min(Math.max(0, gap), rest.length);
-  return [...rest.slice(0, insertAt), head, ...rest.slice(insertAt)];
+  const requeued = replacement ?? head;
+  return [...rest.slice(0, insertAt), requeued, ...rest.slice(insertAt)];
 }

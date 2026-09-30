@@ -1,42 +1,45 @@
 export type SessionProgress = {
-  cardNumber: number;
-  totalCards: number;
-  progressPercent: number;
+  /** Cards still to get through, from the server's authoritative count. */
   remaining: number;
+  /** Distinct cards passed so far in this session. */
+  completed: number;
+  progressPercent: number;
   estimatedMinutes: number;
 };
 
+/**
+ * Session display math.
+ *
+ * `remaining` is the server's truth (same computation as the dashboard), so
+ * progress is `completed / (completed + remaining)`. The ratio can move
+ * backward when new work appears mid-session (cards becoming due, a batch
+ * boundary); that is intended — the display stays factual rather than only
+ * ever moving forward.
+ */
 export function getSessionProgress({
-  sessionTotal,
-  reviewedCount,
+  remaining,
+  completed,
   hasCurrentCard,
 }: {
-  sessionTotal: number;
-  reviewedCount: number;
+  remaining: number | null;
+  completed: number;
   hasCurrentCard: boolean;
 }): SessionProgress {
-  const totalCards = Math.max(0, sessionTotal);
-  const completed = Math.min(Math.max(0, reviewedCount), totalCards);
+  const remainingCount = Math.max(0, remaining ?? 0);
+  const done = Math.max(0, completed);
+  const totalUnits = done + remainingCount;
 
-  if (totalCards === 0) {
-    return {
-      cardNumber: 0,
-      totalCards: 0,
-      progressPercent: 0,
-      remaining: 0,
-      estimatedMinutes: 1,
-    };
+  let progressPercent = 0;
+  if (totalUnits > 0) {
+    progressPercent = (done / totalUnits) * 100;
+  } else if (!hasCurrentCard && done > 0) {
+    progressPercent = 100;
   }
 
-  const remaining = hasCurrentCard ? totalCards - completed : 0;
-  const cardNumber = hasCurrentCard ? Math.min(completed + 1, totalCards) : totalCards;
-  const progressPosition = hasCurrentCard ? cardNumber : totalCards;
-
   return {
-    cardNumber,
-    totalCards,
-    progressPercent: (progressPosition / totalCards) * 100,
-    remaining,
-    estimatedMinutes: Math.max(1, Math.round(remaining * 0.25)),
+    remaining: remainingCount,
+    completed: done,
+    progressPercent: Math.min(100, progressPercent),
+    estimatedMinutes: Math.max(1, Math.round(remainingCount * 0.25)),
   };
 }

@@ -7,6 +7,7 @@ import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/glot/icon";
 import { useAuth } from "@/components/providers/auth-provider";
+import { cardsApi, type DueSummary } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
 
 async function listAllDecks(): Promise<Deck[]> {
@@ -60,8 +61,10 @@ export default function MyDayPage() {
   const [decks, setDecks] = useState<Deck[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [summary, setSummary] = useState<DueSummary | null>(null);
 
   const requestIdRef = useRef(0);
+  const summaryRequestRef = useRef(0);
 
   const loadDecks = useCallback(async () => {
     const requestId = ++requestIdRef.current;
@@ -86,6 +89,35 @@ export default function MyDayPage() {
     };
   }, [loadDecks]);
 
+  const loadSummary = useCallback(async () => {
+    const requestId = ++summaryRequestRef.current;
+    try {
+      const fresh = await cardsApi.getDueSummary();
+      if (requestId !== summaryRequestRef.current) return;
+      setSummary(fresh);
+    } catch {
+      // Keep the deck-derived numbers; a transient count failure must not
+      // blank the hero.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadSummary();
+    return () => {
+      summaryRequestRef.current += 1;
+    };
+  }, [loadSummary]);
+
+  // Refresh the count when the tab comes back to the foreground so it
+  // reflects reviews just done (session page, another tab, another device).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void loadSummary();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+  }, [loadSummary]);
+
   const now = useMemo(() => new Date(), []);
   const greeting = useMemo(() => greetingForHour(now.getHours()), [now]);
   const heroDate = useMemo(() => formatHeroDate(now), [now]);
@@ -97,7 +129,11 @@ export default function MyDayPage() {
     return { totalDue, totalNew, activeDecks };
   }, [decks]);
 
-  const todayTotal = stats.totalDue + stats.totalNew;
+  // Prefer the server-wide summary (the same computation the session header
+  // shows); the deck-derived sums remain as a fallback until it arrives.
+  const heroDue = summary ? summary.scheduled_due_count : stats.totalDue;
+  const heroNew = summary ? summary.new_count : stats.totalNew;
+  const todayTotal = summary ? summary.total : stats.totalDue + stats.totalNew;
 
   // SPACE key — start session
   useEffect(() => {
@@ -150,7 +186,13 @@ export default function MyDayPage() {
     return (
       <div className="text-center py-32 space-y-4">
         <p style={{ color: "var(--muted)" }}>{error}</p>
-        <Button variant="outline" onClick={() => void loadDecks()}>
+        <Button
+          variant="outline"
+          onClick={() => {
+            void loadDecks();
+            void loadSummary();
+          }}
+        >
           Try again
         </Button>
       </div>
@@ -235,10 +277,10 @@ export default function MyDayPage() {
               </div>
               <div className="flex gap-6 mt-5" style={{ color: "var(--muted)", fontSize: 13 }}>
                 <span>
-                  <span className="mono" style={{ color: "var(--warn)" }}>{stats.totalDue}</span> due
+                  <span className="mono" style={{ color: "var(--warn)" }}>{heroDue}</span> due
                 </span>
                 <span>
-                  <span className="mono" style={{ color: "var(--info)" }}>{stats.totalNew}</span> new
+                  <span className="mono" style={{ color: "var(--info)" }}>{heroNew}</span> new
                 </span>
               </div>
             </div>

@@ -1,4 +1,4 @@
-import { parseApiError } from "@/lib/api-error";
+import { apiErrorFromResponse } from "@/lib/api-error";
 import { fetchWithAuth } from "@/lib/api/fetch-with-auth";
 
 export type CardState = "new" | "learning" | "review" | "relearning";
@@ -16,6 +16,13 @@ export interface Card {
   state: CardState;
   reps: number;
   lapses: number;
+  /**
+   * Bumped by the server on every recorded review. The session echoes the
+   * version it saw back on each rating so a stale submission (card reviewed
+   * on another device meanwhile) is rejected instead of overwriting newer
+   * scheduling.
+   */
+  review_version: number;
   last_review_at: string | null;
   next_review_at: string | null;
   created_at: string;
@@ -49,6 +56,33 @@ export interface DueCardsOptions {
   seed?: number;
 }
 
+/**
+ * Study-eligible counts for one scope (all decks, or a single deck).
+ *
+ * `total` is the number the session header shows and the dashboard's
+ * "cards to study" figure; the breakdown is the dashboard's "due" and "new"
+ * chips. Both surfaces read the same server computation, so they cannot
+ * disagree.
+ */
+export interface DueSummary {
+  scheduled_due_count: number;
+  new_count: number;
+  total: number;
+  as_of: string;
+  deck_id: number | null;
+}
+
+/**
+ * One batch of the study queue plus the scope counts from the same SQL
+ * snapshot. An empty `items` with `summary.total === 0` is the only truthful
+ * "nothing left to review" signal.
+ */
+export interface DueBatchResponse {
+  items: Card[];
+  summary: DueSummary;
+  limit: number;
+}
+
 export interface CreateCardRequest {
   front_content: string;
   back_content: string;
@@ -72,6 +106,23 @@ export interface UpdateCardRequest {
 export interface ReviewRequest {
   rating: 1 | 2 | 3 | 4;
   review_duration_ms?: number;
+  /**
+   * Client-generated idempotency key. Retries of the same submission reuse
+   * the same key; the server answers repeats from the recorded receipt
+   * instead of applying the rating twice (`replayed: true`).
+   */
+  request_id: string;
+  /**
+   * The card's review_version when it was loaded. A mismatch means another
+   * device reviewed the card first: the server answers 409 instead of
+   * overwriting newer scheduling.
+   */
+  expected_review_version?: number;
+  /**
+   * Deck scope for the returned due summary (the session's scope). Omit for
+   * all-decks (mixed) sessions.
+   */
+  scope_deck_id?: number;
 }
 
 export interface SchedulingInfo {
@@ -91,6 +142,17 @@ export interface ReviewResponse {
   card: Card;
   next_states: NextStatesResponse;
   message: string;
+  request_id: string | null;
+  review_id: number | null;
+  /** True when this response replayed an earlier recorded submission. */
+  replayed: boolean;
+  /** Fresh scope counts (absent only on legacy submissions without a key). */
+  summary: DueSummary | null;
+}
+
+/** Optional per-request controls for cancellable calls. */
+export interface RequestOptions {
+  signal?: AbortSignal;
 }
 
 const API_BASE = "/api/v1/cards";
@@ -121,6 +183,9 @@ function assertCard(value: unknown, context = "Card"): asserts value is Card {
   }
   if (typeof value.reps !== "number") throw new Error(`${context}: invalid reps`);
   if (typeof value.lapses !== "number") throw new Error(`${context}: invalid lapses`);
+  if (typeof value.review_version !== "number") {
+    throw new Error(`${context}: invalid review_version`);
+  }
   if (!(value.last_review_at === null || typeof value.last_review_at === "string")) {
     throw new Error(`${context}: invalid last_review_at`);
   }
@@ -156,6 +221,39 @@ function parseCardListResponse(value: unknown, context = "Card list response"): 
   };
 }
 
+function parseDueSummary(value: unknown, context = "Due summary"): DueSummary {
+  if (!isObject(value)) throw new Error(`${context}: expected object`);
+  if (typeof value.scheduled_due_count !== "number") {
+    throw new Error(`${context}: invalid scheduled_due_count`);
+  }
+  if (typeof value.new_count !== "number") throw new Error(`${context}: invalid new_count`);
+  if (typeof value.total !== "number") throw new Error(`${context}: invalid total`);
+  if (value.scheduled_due_count + value.new_count !== value.total) {
+    throw new Error(`${context}: total does not match the breakdown`);
+  }
+  if (typeof value.as_of !== "string") throw new Error(`${context}: invalid as_of`);
+  if (!(value.deck_id === null || typeof value.deck_id === "number")) {
+    throw new Error(`${context}: invalid deck_id`);
+  }
+
+  return {
+    scheduled_due_count: value.scheduled_due_count,
+    new_count: value.new_count,
+    total: value.total,
+    as_of: value.as_of,
+    deck_id: value.deck_id,
+  };
+}
+
+function parseDueBatchResponse(value: unknown): DueBatchResponse {
+  if (!isObject(value)) throw new Error("Due batch response: expected object");
+  const items = parseCardArray(value.items, "Due batch response.items");
+  const summary = parseDueSummary(value.summary, "Due batch response.summary");
+  if (typeof value.limit !== "number") throw new Error("Due batch response: invalid limit");
+
+  return { items, summary, limit: value.limit };
+}
+
 function assertSchedulingInfo(value: unknown, context: string): asserts value is SchedulingInfo {
   if (!isObject(value)) throw new Error(`${context}: expected object`);
   if (typeof value.interval_days !== "number") throw new Error(`${context}: invalid interval_days`);
@@ -177,22 +275,32 @@ function parseReviewResponse(value: unknown): ReviewResponse {
   const card = parseCard(value.card, "Review response.card");
   const nextStates = parseNextStatesResponse(value.next_states);
   if (typeof value.message !== "string") throw new Error("Review response: invalid message");
+  if (!(value.request_id === null || typeof value.request_id === "string")) {
+    throw new Error("Review response: invalid request_id");
+  }
+  if (!(value.review_id === null || typeof value.review_id === "number")) {
+    throw new Error("Review response: invalid review_id");
+  }
+  if (typeof value.replayed !== "boolean") {
+    throw new Error("Review response: invalid replayed");
+  }
+  const summary =
+    value.summary === null ? null : parseDueSummary(value.summary, "Review response.summary");
 
   return {
     card,
     next_states: nextStates,
     message: value.message,
+    request_id: value.request_id,
+    review_id: value.review_id,
+    replayed: value.replayed,
+    summary,
   };
 }
 
 class CardsApi {
   private async parseError(response: Response, fallback: string): Promise<never> {
-    const data = await response.json().catch(() => null);
-    if (data) {
-      throw new Error(parseApiError(data));
-    }
-
-    throw new Error(fallback);
+    throw await apiErrorFromResponse(response, fallback);
   }
 
   async listCards(options: ListCardsOptions = {}): Promise<CardListResponse> {
@@ -223,7 +331,7 @@ class CardsApi {
     return parseCardListResponse(data, "List cards response");
   }
 
-  async getDueCards(options: DueCardsOptions = {}): Promise<Card[]> {
+  async getDueCards(options: DueCardsOptions = {}, init: RequestOptions = {}): Promise<Card[]> {
     const params = new URLSearchParams();
 
     if (options.deck_id !== undefined) {
@@ -238,6 +346,8 @@ class CardsApi {
     const query = params.toString();
     const response = await fetchWithAuth(`${API_BASE}/due${query ? `?${query}` : ""}`, {
       credentials: "include",
+      cache: "no-store",
+      signal: init.signal,
     });
 
     if (!response.ok) {
@@ -246,6 +356,64 @@ class CardsApi {
 
     const data = await response.json();
     return parseCardArray(data, "Due cards response");
+  }
+
+  /** Authoritative study-eligible counts for one scope. */
+  async getDueSummary(
+    options: { deck_id?: number } = {},
+    init: RequestOptions = {},
+  ): Promise<DueSummary> {
+    const params = new URLSearchParams();
+    if (options.deck_id !== undefined) {
+      params.set("deck_id", String(options.deck_id));
+    }
+
+    const query = params.toString();
+    const response = await fetchWithAuth(`${API_BASE}/due/summary${query ? `?${query}` : ""}`, {
+      credentials: "include",
+      cache: "no-store",
+      signal: init.signal,
+    });
+
+    if (!response.ok) {
+      await this.parseError(response, "Failed to fetch study counts");
+    }
+
+    const data = await response.json();
+    return parseDueSummary(data);
+  }
+
+  /**
+   * The next batch of the study queue plus the counts from the same snapshot.
+   * The client keeps requesting batches until `items` is empty.
+   */
+  async getDueBatch(
+    options: DueCardsOptions = {},
+    init: RequestOptions = {},
+  ): Promise<DueBatchResponse> {
+    const params = new URLSearchParams();
+
+    if (options.deck_id !== undefined) {
+      params.set("deck_id", String(options.deck_id));
+    }
+    params.set("limit", String(options.limit ?? 100));
+    if (options.seed !== undefined) {
+      params.set("seed", String(options.seed));
+    }
+
+    const query = params.toString();
+    const response = await fetchWithAuth(`${API_BASE}/due/batch${query ? `?${query}` : ""}`, {
+      credentials: "include",
+      cache: "no-store",
+      signal: init.signal,
+    });
+
+    if (!response.ok) {
+      await this.parseError(response, "Failed to fetch due cards");
+    }
+
+    const data = await response.json();
+    return parseDueBatchResponse(data);
   }
 
   async getCard(cardId: number): Promise<Card> {
@@ -325,7 +493,16 @@ class CardsApi {
     return parseNextStatesResponse(data);
   }
 
-  async reviewCard(cardId: number, payload: ReviewRequest): Promise<ReviewResponse> {
+  /**
+   * Submit a rating. `payload.request_id` is the idempotency key: reuse the
+   * exact same key (and payload) when retrying; never generate a fresh key
+   * for a retry of the same intent.
+   */
+  async reviewCard(
+    cardId: number,
+    payload: ReviewRequest,
+    init: RequestOptions = {},
+  ): Promise<ReviewResponse> {
     const response = await fetchWithAuth(`${API_BASE}/${cardId}/review`, {
       method: "POST",
       credentials: "include",
@@ -333,6 +510,7 @@ class CardsApi {
         "Content-Type": "application/json",
       },
       body: JSON.stringify(payload),
+      signal: init.signal,
     });
 
     if (!response.ok) {

@@ -1,19 +1,18 @@
 /**
- * Session page — API contract tests.
+ * Session helpers — API contract and pure-logic tests.
  *
  * The project does not have a React/DOM render environment, so these tests
- * guard the API layer as the session page uses it rather than testing the
- * component directly. They are colocated with the session page so they are
- * easy to extend when component-level tests become feasible.
+ * guard the session page's building blocks (queue, seed, progress, and the
+ * API calls the page makes) rather than testing the component directly.
  *
  * What is covered:
- *   - getDueCards with limit:100 (the session overrides the API default of 20)
- *   - getDueCards with and without deck_id (single-deck vs mixed-review modes)
- *   - Empty due-cards list (the "All caught up" state)
- *   - reviewCard sends all four rating values (1-4) plus review_duration_ms
- *   - reviewCard failure surfaces a meaningful error message
- *   - the in-session queue requeues failed cards and tracks progress correctly
- *   - the per-session seed is scoped, persisted, reused, and cleared correctly
+ *   - the in-session queue requeues failed cards, carries fresh card objects,
+ *     and tracks progress correctly
+ *   - the per-session seed is scoped (user + deck), persisted, reused,
+ *     cleared correctly, and survives unusable storage
+ *   - session progress is computed from the server's remaining count
+ *   - the due endpoints the session uses (batch + legacy list) and the
+ *     review receipt fields
  *
  * What is NOT covered here (requires a DOM/React render environment):
  *   - Rating buttons are visible only after the card is flipped
@@ -27,6 +26,7 @@ import { __resetForTests } from "@/lib/api/fetch-with-auth";
 import {
   cardsApi,
   type Card,
+  type DueSummary,
   type NextStatesResponse,
 } from "@/lib/api/cards";
 import { getSessionProgress } from "./session-progress";
@@ -67,6 +67,7 @@ function makeCard(overrides: Partial<Card> = {}): Card {
     state: "review",
     reps: 3,
     lapses: 0,
+    review_version: 0,
     last_review_at: "2026-05-10T10:00:00Z",
     next_review_at: "2026-05-17T10:00:00Z",
     created_at: "2025-01-01T00:00:00Z",
@@ -78,6 +79,29 @@ function makeCard(overrides: Partial<Card> = {}): Card {
 function makeNextStates(): NextStatesResponse {
   const info = { interval_days: 1, new_difficulty: 0.3, new_stability: 1.5 };
   return { again: info, hard: info, good: info, easy: info };
+}
+
+function makeSummary(total: number, deckId: number | null = null): DueSummary {
+  return {
+    scheduled_due_count: total,
+    new_count: 0,
+    total,
+    as_of: "2026-09-29T12:00:00Z",
+    deck_id: deckId,
+  };
+}
+
+function reviewBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    card: makeCard(),
+    next_states: makeNextStates(),
+    message: "ok",
+    request_id: "req-1",
+    review_id: 10,
+    replayed: false,
+    summary: makeSummary(1),
+    ...overrides,
+  };
 }
 
 let fetchMock: FetchMock;
@@ -94,42 +118,80 @@ afterEach(() => {
 });
 
 describe("session — progress display", () => {
-  test("keeps the original session total while advancing through reviewed cards", () => {
-    const firstCard = getSessionProgress({ sessionTotal: 3, reviewedCount: 0, hasCurrentCard: true });
-    expect(firstCard).toMatchObject({
-      cardNumber: 1,
-      totalCards: 3,
-      remaining: 3,
-    });
-    expect(firstCard.progressPercent).toBeCloseTo(100 / 3);
+  test("computes progress from completed plus the server's remaining count", () => {
+    const start = getSessionProgress({ remaining: 3, completed: 0, hasCurrentCard: true });
+    expect(start).toMatchObject({ remaining: 3, completed: 0, progressPercent: 0 });
 
-    const secondCard = getSessionProgress({ sessionTotal: 3, reviewedCount: 1, hasCurrentCard: true });
-    expect(secondCard).toMatchObject({
-      cardNumber: 2,
-      totalCards: 3,
-      remaining: 2,
-    });
-    expect(secondCard.progressPercent).toBeCloseTo(200 / 3);
+    const mid = getSessionProgress({ remaining: 2, completed: 1, hasCurrentCard: true });
+    expect(mid.progressPercent).toBeCloseTo(100 / 3);
 
-    expect(getSessionProgress({ sessionTotal: 3, reviewedCount: 3, hasCurrentCard: false })).toMatchObject({
-      cardNumber: 3,
-      totalCards: 3,
-      progressPercent: 100,
-      remaining: 0,
-    });
+    const done = getSessionProgress({ remaining: 0, completed: 3, hasCurrentCard: false });
+    expect(done).toMatchObject({ remaining: 0, completed: 3, progressPercent: 100 });
   });
 
   test("shows zero progress for an empty session", () => {
-    expect(getSessionProgress({ sessionTotal: 0, reviewedCount: 0, hasCurrentCard: false })).toMatchObject({
-      cardNumber: 0,
-      totalCards: 0,
-      progressPercent: 0,
-      remaining: 0,
-    });
+    expect(
+      getSessionProgress({ remaining: 0, completed: 0, hasCurrentCard: false }),
+    ).toMatchObject({ remaining: 0, completed: 0, progressPercent: 0 });
+  });
+
+  test("treats an unknown remaining count as zero, never NaN", () => {
+    const unknown = getSessionProgress({ remaining: null, completed: 0, hasCurrentCard: true });
+    expect(Number.isNaN(unknown.progressPercent)).toBe(false);
+    expect(unknown.progressPercent).toBe(0);
+  });
+
+  test("progress can move backward when new work appears (stays truthful)", () => {
+    const before = getSessionProgress({ remaining: 1, completed: 4, hasCurrentCard: true });
+    const after = getSessionProgress({ remaining: 2, completed: 4, hasCurrentCard: true });
+    expect(before.progressPercent).toBeGreaterThan(after.progressPercent);
+  });
+
+  test("estimates minutes from the remaining count", () => {
+    expect(
+      getSessionProgress({ remaining: 8, completed: 0, hasCurrentCard: true }).estimatedMinutes,
+    ).toBe(2);
   });
 });
 
-describe("session — due-card loading", () => {
+describe("session — due-batch loading", () => {
+  test("requests the first batch with limit 100 and the stable seed", async () => {
+    fetchMock.enqueue(() =>
+      jsonResponse({ items: [makeCard()], summary: makeSummary(7), limit: 100 }),
+    );
+
+    const batch = await cardsApi.getDueBatch({ deck_id: 5, limit: 100, seed: 123 });
+
+    const url = new URL(fetchMock.calls[0].url, "http://localhost");
+    expect(url.pathname).toBe("/api/v1/cards/due/batch");
+    expect(url.searchParams.get("deck_id")).toBe("5");
+    expect(url.searchParams.get("limit")).toBe("100");
+    expect(url.searchParams.get("seed")).toBe("123");
+    expect(batch.items).toHaveLength(1);
+    expect(batch.summary.total).toBe(7);
+  });
+
+  test("a confirmed-empty batch is the only empty signal (total 0)", async () => {
+    fetchMock.enqueue(() =>
+      jsonResponse({ items: [], summary: makeSummary(0), limit: 100 }),
+    );
+
+    const batch = await cardsApi.getDueBatch({ limit: 100 });
+
+    expect(batch.items).toHaveLength(0);
+    expect(batch.summary.total).toBe(0);
+  });
+
+  test("the summary endpoint returns the same count shape as the dashboard", async () => {
+    fetchMock.enqueue(() => jsonResponse(makeSummary(250)));
+
+    const summary = await cardsApi.getDueSummary();
+
+    expect(summary.total).toBe(250);
+  });
+});
+
+describe("session — legacy due-card loading", () => {
   test("requests limit:100 for a deck-specific session (not the API default of 20)", async () => {
     fetchMock.enqueue(() => jsonResponse([makeCard()]));
 
@@ -161,17 +223,15 @@ describe("session — due-card loading", () => {
 
 describe("session — rating a card", () => {
   test.each([1, 2, 3, 4] as const)(
-    "rating %i is forwarded verbatim with review_duration_ms",
+    "rating %i is forwarded verbatim with review_duration_ms and the request id",
     async (rating) => {
-      fetchMock.enqueue(() =>
-        jsonResponse({
-          card: makeCard(),
-          next_states: makeNextStates(),
-          message: "ok",
-        }),
-      );
+      fetchMock.enqueue(() => jsonResponse(reviewBody()));
 
-      await cardsApi.reviewCard(1, { rating, review_duration_ms: 5000 });
+      await cardsApi.reviewCard(1, {
+        rating,
+        review_duration_ms: 5000,
+        request_id: "req-abc",
+      });
 
       const call = fetchMock.calls[0];
       expect(call.url).toBe("/api/v1/cards/1/review");
@@ -179,8 +239,20 @@ describe("session — rating a card", () => {
       const body = JSON.parse(call.init?.body as string);
       expect(body.rating).toBe(rating);
       expect(body.review_duration_ms).toBe(5000);
+      expect(body.request_id).toBe("req-abc");
     },
   );
+
+  test("a replayed response carries the receipt so the client can settle the outbox", async () => {
+    fetchMock.enqueue(() =>
+      jsonResponse(reviewBody({ replayed: true, request_id: "req-abc" })),
+    );
+
+    const result = await cardsApi.reviewCard(1, { rating: 3, request_id: "req-abc" });
+
+    expect(result.replayed).toBe(true);
+    expect(result.request_id).toBe("req-abc");
+  });
 
   test("surfaces the API error detail when the review request fails", async () => {
     fetchMock.enqueue(() =>
@@ -188,7 +260,7 @@ describe("session — rating a card", () => {
     );
 
     await expect(
-      cardsApi.reviewCard(999, { rating: 1, review_duration_ms: 1000 }),
+      cardsApi.reviewCard(999, { rating: 1, review_duration_ms: 1000, request_id: "req-x" }),
     ).rejects.toThrow("Card not found");
   });
 });
@@ -235,6 +307,16 @@ describe("session — in-session requeue", () => {
     expect(queue).toEqual(["a", "b", "c"]);
   });
 
+  test("a replacement card object takes the requeued slot (fresh review_version)", () => {
+    const shown = { id: 1, review_version: 0 };
+    const updated = { id: 1, review_version: 1 };
+    const other = { id: 2, review_version: 0 };
+
+    expect(advanceQueue([shown, other], 1, 3, updated)).toEqual([other, updated]);
+    // Passing ratings still drop the head; the replacement is ignored.
+    expect(advanceQueue([shown, other], 3, 3, updated)).toEqual([other]);
+  });
+
   test("progress counts distinct passed cards and never overflows when cards requeue", () => {
     // Session of 2 cards. Card A is failed once (requeued), then both pass.
     // Completed count must reach exactly the session total, never exceed it.
@@ -256,12 +338,9 @@ describe("session — in-session requeue", () => {
     expect(completed).toBe(2);
     expect(queue).toEqual([]);
 
-    expect(getSessionProgress({ sessionTotal: total, reviewedCount: completed, hasCurrentCard: false })).toMatchObject({
-      cardNumber: 2,
-      totalCards: 2,
-      progressPercent: 100,
-      remaining: 0,
-    });
+    expect(
+      getSessionProgress({ remaining: 0, completed, hasCurrentCard: false }),
+    ).toMatchObject({ remaining: 0, completed: 2, progressPercent: 100 });
   });
 });
 
@@ -279,14 +358,15 @@ function makeStorage(initial: Record<string, string> = {}): SeedStorage & {
 }
 
 describe("session — per-session seed", () => {
-  test("scopes the storage key per deck, and apart from mixed review", () => {
-    const mixed = sessionSeedKey(undefined);
-    const deck1 = sessionSeedKey(1);
-    const deck2 = sessionSeedKey(2);
+  test("scopes the storage key per user, per deck, and apart from mixed review", () => {
+    const mixed = sessionSeedKey(7, undefined);
+    const deck1 = sessionSeedKey(7, 1);
+    const deck2 = sessionSeedKey(7, 2);
+    const otherUser = sessionSeedKey(8, 1);
 
-    expect(new Set([mixed, deck1, deck2]).size).toBe(3);
+    expect(new Set([mixed, deck1, deck2, otherUser]).size).toBe(4);
     // Stable across calls so reload reads back the same slot.
-    expect(sessionSeedKey(1)).toBe(deck1);
+    expect(sessionSeedKey(7, 1)).toBe(deck1);
   });
 
   test("randomSeed stays a non-negative integer within seed bounds", () => {
@@ -302,18 +382,18 @@ describe("session — per-session seed", () => {
   test("creates and persists a fresh seed when none is stored", () => {
     const storage = makeStorage();
 
-    const seed = getOrCreateSessionSeed(storage, 7, () => 42);
+    const seed = getOrCreateSessionSeed(storage, 7, undefined, () => 42);
 
     expect(seed).toBe(42);
-    expect(storage.getItem(sessionSeedKey(7))).toBe("42");
+    expect(storage.getItem(sessionSeedKey(7, undefined))).toBe("42");
   });
 
   test("reuses the stored seed across calls (interruption-friendly)", () => {
     const storage = makeStorage();
     const generate = () => Math.floor(Math.random() * MAX_SEED);
 
-    const first = getOrCreateSessionSeed(storage, 7, generate);
-    const second = getOrCreateSessionSeed(storage, 7, generate);
+    const first = getOrCreateSessionSeed(storage, 7, undefined, generate);
+    const second = getOrCreateSessionSeed(storage, 7, undefined, generate);
 
     expect(second).toBe(first);
   });
@@ -321,43 +401,84 @@ describe("session — per-session seed", () => {
   test("deck and mixed sessions keep independent seeds", () => {
     const storage = makeStorage();
 
-    const deckSeed = getOrCreateSessionSeed(storage, 7, () => 11);
-    const mixedSeed = getOrCreateSessionSeed(storage, undefined, () => 22);
+    const deckSeed = getOrCreateSessionSeed(storage, 7, 5, () => 11);
+    const mixedSeed = getOrCreateSessionSeed(storage, 7, undefined, () => 22);
 
     expect(deckSeed).toBe(11);
     expect(mixedSeed).toBe(22);
   });
 
-  test("regenerates when the stored value is corrupt", () => {
-    const storage = makeStorage({ [sessionSeedKey(7)]: "not-a-number" });
+  test("users on a shared device keep independent seeds", () => {
+    const storage = makeStorage();
 
-    const seed = getOrCreateSessionSeed(storage, 7, () => 99);
+    const a = getOrCreateSessionSeed(storage, 7, undefined, () => 11);
+    const b = getOrCreateSessionSeed(storage, 8, undefined, () => 22);
+
+    expect(a).toBe(11);
+    expect(b).toBe(22);
+    expect(storage.getItem(sessionSeedKey(8, undefined))).toBe("22");
+  });
+
+  test("regenerates when the stored value is corrupt", () => {
+    const storage = makeStorage({ [sessionSeedKey(7, undefined)]: "not-a-number" });
+
+    const seed = getOrCreateSessionSeed(storage, 7, undefined, () => 99);
 
     expect(seed).toBe(99);
-    expect(storage.getItem(sessionSeedKey(7))).toBe("99");
+    expect(storage.getItem(sessionSeedKey(7, undefined))).toBe("99");
   });
 
   test("regenerates when the stored value is outside backend seed bounds", () => {
-    const storage = makeStorage({ [sessionSeedKey(7)]: String(MAX_SEED + 1) });
+    const storage = makeStorage({ [sessionSeedKey(7, undefined)]: String(MAX_SEED + 1) });
 
-    const seed = getOrCreateSessionSeed(storage, 7, () => 123);
+    const seed = getOrCreateSessionSeed(storage, 7, undefined, () => 123);
 
     expect(seed).toBe(123);
-    expect(storage.getItem(sessionSeedKey(7))).toBe("123");
+    expect(storage.getItem(sessionSeedKey(7, undefined))).toBe("123");
   });
 
   test("clearing drops only the matching scope's seed", () => {
     const storage = makeStorage();
-    getOrCreateSessionSeed(storage, 7, () => 11);
-    getOrCreateSessionSeed(storage, undefined, () => 22);
+    getOrCreateSessionSeed(storage, 7, undefined, () => 11);
+    getOrCreateSessionSeed(storage, 7, 5, () => 22);
 
-    clearSessionSeed(storage, 7);
+    clearSessionSeed(storage, 7, undefined);
 
-    expect(storage.getItem(sessionSeedKey(7))).toBeNull();
-    expect(storage.getItem(sessionSeedKey(undefined))).toBe("22");
+    expect(storage.getItem(sessionSeedKey(7, undefined))).toBeNull();
+    expect(storage.getItem(sessionSeedKey(7, 5))).toBe("22");
 
     // After clearing, the next session draws a fresh seed.
-    const fresh = getOrCreateSessionSeed(storage, 7, () => 33);
+    const fresh = getOrCreateSessionSeed(storage, 7, undefined, () => 33);
     expect(fresh).toBe(33);
+  });
+
+  test("falls back to a stable in-memory seed when storage throws", () => {
+    const broken: SeedStorage = {
+      getItem: () => {
+        throw new Error("storage denied");
+      },
+      setItem: () => {
+        throw new Error("storage denied");
+      },
+      removeItem: () => {
+        throw new Error("storage denied");
+      },
+    };
+
+    const first = getOrCreateSessionSeed(broken, 17, undefined, () => 5);
+    const second = getOrCreateSessionSeed(broken, 17, undefined, () => 6);
+
+    expect(first).toBe(5);
+    // Stable within the page instead of reshuffling on every call.
+    expect(second).toBe(5);
+    expect(() => clearSessionSeed(broken, 17, undefined)).not.toThrow();
+  });
+
+  test("accepts null storage (browser storage unavailable entirely)", () => {
+    const seed = getOrCreateSessionSeed(null, 18, undefined, () => 7);
+    expect(seed).toBe(7);
+
+    const again = getOrCreateSessionSeed(null, 18, undefined, () => 8);
+    expect(again).toBe(7);
   });
 });
