@@ -129,3 +129,127 @@ describe("IndexedDbOutboxStorage", () => {
     expect(result.durable).toBe(false);
   });
 });
+
+/** Minimal fake IndexedDB good enough for the storage adapter. */
+interface FakeRequestLike {
+  onsuccess: (() => void) | null;
+  onerror: (() => void) | null;
+  onupgradeneeded: (() => void) | null;
+  result?: unknown;
+}
+
+interface FakeTransactionLike {
+  oncomplete: (() => void) | null;
+  onabort: (() => void) | null;
+  onerror: (() => void) | null;
+  error: Error | null;
+  objectStore: () => {
+    put: () => FakeRequestLike;
+    delete: () => FakeRequestLike;
+    index: () => { getAll: () => FakeRequestLike };
+  };
+}
+
+function makeFakeIndexedDb() {
+  let currentRequest: FakeRequestLike | null = null;
+  let currentTransaction: FakeTransactionLike | null = null;
+
+  const makeRequest = (): FakeRequestLike => {
+    currentRequest = { onsuccess: null, onerror: null, onupgradeneeded: null };
+    return currentRequest;
+  };
+
+  const db = {
+    objectStoreNames: { contains: () => true },
+    transaction: () => {
+      const transaction: FakeTransactionLike = {
+        oncomplete: null,
+        onabort: null,
+        onerror: null,
+        error: null,
+        objectStore: () => ({
+          put: makeRequest,
+          delete: makeRequest,
+          index: () => ({ getAll: makeRequest }),
+        }),
+      };
+      currentTransaction = transaction;
+      return transaction;
+    },
+  };
+
+  const factory = {
+    open: () => {
+      const request: FakeRequestLike = {
+        onsuccess: null,
+        onerror: null,
+        onupgradeneeded: null,
+      };
+      queueMicrotask(() => {
+        request.result = db;
+        request.onsuccess?.();
+      });
+      return request;
+    },
+  };
+
+  return {
+    factory: factory as unknown as IDBFactory,
+    succeedRequest(result?: unknown) {
+      if (!currentRequest) throw new Error("no request created yet");
+      currentRequest.result = result;
+      currentRequest.onsuccess?.();
+    },
+    completeTransaction() {
+      if (!currentTransaction) throw new Error("no transaction created yet");
+      currentTransaction.oncomplete?.();
+    },
+    abortTransaction(error?: Error) {
+      if (!currentTransaction) throw new Error("no transaction created yet");
+      currentTransaction.error = error ?? null;
+      currentTransaction.onabort?.();
+    },
+  };
+}
+
+const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("IndexedDbOutboxStorage — transaction commit semantics", () => {
+  test("a write resolves only after the transaction commits", async () => {
+    const idb = makeFakeIndexedDb();
+    const storage = new IndexedDbOutboxStorage(idb.factory);
+
+    let settled = false;
+    const pending = storage.put(makeOp()).then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await tick();
+
+    // The request succeeded but the transaction has not committed yet.
+    idb.succeedRequest();
+    await tick();
+    expect(settled).toBe(false);
+
+    idb.completeTransaction();
+    await pending;
+    expect(settled).toBe(true);
+  });
+
+  test("a transaction abort makes the stage report non-durable", async () => {
+    const idb = makeFakeIndexedDb();
+    const outbox = new ReviewOutbox(new IndexedDbOutboxStorage(idb.factory));
+
+    const staged = outbox.stage(makeOp());
+    await tick();
+    idb.succeedRequest();
+    idb.abortTransaction(new Error("quota exceeded"));
+
+    const result = await staged;
+    expect(result.durable).toBe(false);
+  });
+});

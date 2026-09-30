@@ -373,6 +373,24 @@ describe("cardsApi.reviewCard / previewCard", () => {
     });
   });
 
+  test("a response omitting the summary field parses as null", async () => {
+    fetchMock.enqueue(() =>
+      jsonResponse({
+        card: makeCard({ id: 5 }),
+        next_states: makeNextStates(),
+        message: "ok",
+        request_id: "req-9",
+        review_id: 77,
+        replayed: false,
+        // summary omitted entirely (serializer with exclude_none)
+      }),
+    );
+
+    const result = await cardsApi.reviewCard(5, { rating: 3, request_id: "req-9" });
+
+    expect(result.summary).toBeNull();
+  });
+
   test("review rejects a response missing the receipt fields (old server)", async () => {
     fetchMock.enqueue(() =>
       jsonResponse({

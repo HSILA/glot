@@ -657,7 +657,13 @@ async def review_card(
                 # nothing was recorded by this request, so ask for a retry.
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail="Duplicate submission is being processed; retry shortly",
+                    detail={
+                        "code": "duplicate_in_flight",
+                        "message": (
+                            "Duplicate submission is being processed; "
+                            "retry shortly."
+                        ),
+                    },
                 )
             if receipt.fingerprint != fingerprint:
                 raise HTTPException(

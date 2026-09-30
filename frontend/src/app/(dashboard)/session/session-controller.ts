@@ -184,6 +184,10 @@ export class SessionController {
   private loadGeneration = 0;
   private batchAbort: AbortController | null = null;
   private resolving = false;
+  /** request_id of the submission currently in flight (one at a time). */
+  private inFlight: string | null = null;
+  /** Revision bumped whenever counts land from an authoritative source. */
+  private countsVersion = 0;
   private startedAt: number;
 
   constructor(options: SessionControllerOptions) {
@@ -246,8 +250,13 @@ export class SessionController {
       await this.loadBatch(false);
     } else if (this.state.phase === "active" && this.state.queue.length > 0) {
       try {
+        // A summary read that a rating or batch update races past must not
+        // overwrite the newer count: capture the revision and apply the
+        // fetched value only when nothing newer has landed meanwhile.
+        const version = this.countsVersion;
         const summary = await this.api.getDueSummary({ deck_id: this.scope.deckId });
         if (this.disposed) return;
+        if (this.countsVersion !== version) return;
         this.setRemaining(summary.total);
         this.emit();
       } catch {
@@ -259,7 +268,7 @@ export class SessionController {
   /** Rate the head card. Blocked while a submission is unresolved. */
   async rate(rating: Rating): Promise<void> {
     if (this.disposed) return;
-    if (this.state.pendingRetry) return;
+    if (this.state.pendingRetry || this.resolving) return;
 
     const card = this.state.queue[0];
     if (!card || this.state.phase !== "active") return;
@@ -286,22 +295,36 @@ export class SessionController {
     if (this.disposed) return;
     if (!durable) this.state.durabilityDegraded = true;
 
-    const outcome = await this.sendToServer(op);
-    if (this.disposed) return;
-    await this.applyOutcome(op, outcome);
+    this.inFlight = op.request_id;
+    try {
+      const outcome = await this.sendToServer(op);
+      if (this.disposed) return;
+      await this.applyOutcome(op, outcome);
+    } finally {
+      if (this.inFlight === op.request_id) this.inFlight = null;
+    }
   }
 
   /** Retry the unresolved submission with the SAME idempotency key. */
   async retryPending(): Promise<void> {
     const op = this.state.pendingRetry;
     if (this.disposed || !op) return;
+    // One submission at a time per operation: an overlapping retry (button
+    // plus resume, double click) must not apply the same acknowledgment
+    // twice.
+    if (this.resolving || this.inFlight === op.request_id) return;
 
     this.state.phase = "submitting";
     this.emit();
 
-    const outcome = await this.sendToServer(op);
-    if (this.disposed) return;
-    await this.applyOutcome(op, outcome);
+    this.inFlight = op.request_id;
+    try {
+      const outcome = await this.sendToServer(op);
+      if (this.disposed) return;
+      await this.applyOutcome(op, outcome);
+    } finally {
+      if (this.inFlight === op.request_id) this.inFlight = null;
+    }
   }
 
   // --- internals -----------------------------------------------------------
@@ -310,11 +333,16 @@ export class SessionController {
     return (op.scope_deck_id ?? null) === (this.scope.deckId ?? null);
   }
 
-  private async withTimeout<T>(promise: Promise<T>): Promise<T> {
+  private async withTimeout<T>(promise: Promise<T>, abort?: AbortController): Promise<T> {
     if (!this.submitTimeoutMs) return promise;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(
-        () => reject(new Error("Review submission timed out")),
+        () => {
+          // Cancel the request too: a retry must not race a still-open
+          // duplicate over the wire.
+          abort?.abort();
+          reject(new Error("Review submission timed out"));
+        },
         this.submitTimeoutMs,
       );
       promise.then(
@@ -343,8 +371,12 @@ export class SessionController {
       payload.scope_deck_id = op.scope_deck_id;
     }
 
+    const abort = new AbortController();
     try {
-      const ack = await this.withTimeout(this.api.reviewCard(op.card_id, payload));
+      const ack = await this.withTimeout(
+        this.api.reviewCard(op.card_id, payload, { signal: abort.signal }),
+        abort,
+      );
       return { kind: "acknowledged", ack };
     } catch (error) {
       if (error instanceof ApiError) {
@@ -353,6 +385,11 @@ export class SessionController {
             error.detail && typeof error.detail === "object"
               ? ((error.detail as { code?: unknown }).code ?? null)
               : null;
+          if (code === "duplicate_in_flight") {
+            // The server still has this exact key in flight: nothing was
+            // recorded yet, and the retry must keep the original key.
+            return { kind: "ambiguous" };
+          }
           if (code === "stale_review_version") {
             return {
               kind: "rejected",
@@ -378,6 +415,8 @@ export class SessionController {
 
   private setRemaining(total: number): void {
     this.state.remaining = Math.max(0, total);
+    // A newer count invalidates any summary read that is still in flight.
+    this.countsVersion += 1;
   }
 
   private async applyOutcome(op: PendingReview, outcome: SendOutcome): Promise<void> {
@@ -386,10 +425,19 @@ export class SessionController {
       if (this.disposed) return;
 
       const ack = outcome.ack;
-      // Requeued cuts (Again) carry the UPDATED card object so a later
-      // re-rating uses fresh scheduling fields and the new review_version.
-      this.state.queue = advanceQueue(this.state.queue, op.rating, undefined, ack.card);
-      if (!shouldRequeue(op.rating)) this.state.completed += 1;
+      const head = this.state.queue[0];
+      if (head !== undefined && head.id === op.card_id) {
+        // Requeued cuts (Again) carry the UPDATED card object so a later
+        // re-rating uses fresh scheduling fields and the new review_version.
+        this.state.queue = advanceQueue(this.state.queue, op.rating, undefined, ack.card);
+        if (!shouldRequeue(op.rating)) this.state.completed += 1;
+      } else if (head !== undefined) {
+        // A restored operation for a card that is not the current head (an
+        // earlier visit staged it). Settle it without reordering the session:
+        // drop the reviewed card from the loaded queue. If the rating keeps
+        // it due, the next batch brings it back with a fresh version.
+        this.state.queue = this.state.queue.filter((card) => card.id !== op.card_id);
+      }
 
       if (ack.summary) {
         this.setRemaining(ack.summary.total);
@@ -422,13 +470,16 @@ export class SessionController {
       this.state.pendingRetry = null;
 
       if (outcome.reason === "stale") {
-        // Another device reviewed the card first. Applying this rating would
-        // overwrite newer scheduling, so the server refused it; drop the card
-        // from this session and use the fresh counts it returned.
+        // Another device — or an earlier visit of this session — already
+        // reviewed the card. Applying this rating would overwrite newer
+        // scheduling, so the server refused it; drop the card from this
+        // session and use the fresh counts it returned.
         this.state.notice =
-          "This card was already reviewed on another device, so it was removed from this session.";
+          "This card was already reviewed elsewhere, so it was removed from this session.";
         if (outcome.summary) this.setRemaining(outcome.summary.total);
-        this.state.queue = this.state.queue.slice(1);
+        this.state.queue = this.state.queue.filter((card) => card.id !== op.card_id);
+        // The next card's review timer starts now, not when this one was shown.
+        this.startedAt = this.now();
         if (this.state.queue.length === 0) {
           await this.loadBatch(false);
         } else {
@@ -440,7 +491,8 @@ export class SessionController {
 
       if (outcome.reason === "card_gone") {
         this.state.notice = "This card no longer exists, so it was removed from the session.";
-        this.state.queue = this.state.queue.slice(1);
+        this.state.queue = this.state.queue.filter((card) => card.id !== op.card_id);
+        this.startedAt = this.now();
         if (this.state.queue.length === 0) {
           await this.loadBatch(false);
         } else {
@@ -471,13 +523,13 @@ export class SessionController {
    * so counts already include the recovered reviews.
    */
   private async resolvePending(): Promise<void> {
-    if (this.resolving || this.disposed) return;
+    if (this.resolving || this.disposed || this.inFlight) return;
     this.resolving = true;
     try {
       const pending = await this.outbox.pendingForUser(this.scope.userId);
-      if (!pending.length || this.disposed) return;
+      if (this.disposed) return;
 
-      let settled = 0;
+      const settledIds = new Set<string>();
       let unresolved = 0;
       let unresolvedInScope: PendingReview | null = null;
 
@@ -489,16 +541,21 @@ export class SessionController {
           if (this.opInScope(op) && !unresolvedInScope) unresolvedInScope = op;
         } else {
           await this.outbox.complete(op.request_id);
-          settled += 1;
+          settledIds.add(op.request_id);
         }
       }
 
-      if (settled > 0) {
-        this.state.notice = `Recovered ${settled} review${settled === 1 ? "" : "s"} from an earlier visit.`;
+      if (settledIds.size > 0) {
+        this.state.notice = `Recovered ${settledIds.size} review${settledIds.size === 1 ? "" : "s"} from an earlier visit.`;
       }
       if (unresolvedInScope) {
         this.state.pendingRetry = unresolvedInScope;
-      } else if (unresolved > 0) {
+      } else if (this.state.pendingRetry) {
+        // The blocking retry settled (just now, on another surface, or the
+        // scan no longer contains it); ratings are unblocked again.
+        this.state.pendingRetry = null;
+      }
+      if (!unresolvedInScope && unresolved > 0) {
         const tail = `${unresolved} earlier review${unresolved === 1 ? "" : "s"} could not be confirmed yet; it will retry automatically.`;
         this.state.notice = this.state.notice ? `${this.state.notice} ${tail}` : tail;
       }

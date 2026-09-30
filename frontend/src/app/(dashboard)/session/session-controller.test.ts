@@ -79,8 +79,8 @@ interface ReviewCall {
 /** Scripted SessionApi: each queue yields one outcome per call; empty = throw. */
 class FakeApi implements SessionApi {
   batches: Array<{ items: Card[]; summary: DueSummary; limit: number } | Error> = [];
-  summaries: Array<DueSummary | Error> = [];
-  reviews: Array<ReviewAck | Error> = [];
+  summaries: Array<DueSummary | Error | Promise<DueSummary>> = [];
+  reviews: Array<ReviewAck | Error | Promise<ReviewAck>> = [];
   reviewCalls: ReviewCall[] = [];
   batchCalls: Array<{ deck_id?: number; limit?: number; seed?: number }> = [];
   log: string[] = [];
@@ -129,25 +129,29 @@ function ack(
 function makeHarness(
   api: FakeApi,
   storage: OutboxStorage = new MemoryOutboxStorage(),
+  options: { now?: () => number } = {},
 ) {
   const states: SessionState[] = [];
   let clearedSeeds = 0;
+  const outbox = new ReviewOutbox(storage);
   const controller = new SessionController({
     scope: { userId: 7 },
     api,
-    outbox: new ReviewOutbox(storage),
+    outbox,
     getSeed: () => 123,
     clearSeed: () => {
       clearedSeeds += 1;
     },
     onState: (state) => states.push(state),
     submitTimeoutMs: 0,
-    now: (() => {
-      let t = 1_000_000;
-      return () => (t += 1000);
-    })(),
+    now:
+      options.now ??
+      (() => {
+        let t = 1_000_000;
+        return () => (t += 1000);
+      })(),
   });
-  return { controller, states, storage, clearedSeeds: () => clearedSeeds };
+  return { controller, states, storage, outbox, clearedSeeds: () => clearedSeeds };
 }
 
 function stagedOp(overrides: Partial<PendingReview> = {}): PendingReview {
@@ -328,7 +332,7 @@ describe("SessionController — retry-safe submissions", () => {
     expect(state.queue.map((c) => c.id)).toEqual([2]);
     expect(state.remaining).toBe(1);
     expect(state.pendingRetry).toBeNull();
-    expect(state.notice).toMatch(/another device/i);
+    expect(state.notice).toMatch(/already reviewed/i);
   });
 
   test("a deleted card (404) is dropped with a notice", async () => {
@@ -506,5 +510,237 @@ describe("generateRequestId", () => {
   test("returns unique ids", () => {
     const ids = new Set(Array.from({ length: 200 }, () => generateRequestId()));
     expect(ids.size).toBe(200);
+  });
+});
+
+describe("SessionController — review-fix regressions", () => {
+  test("overlapping retries submit once and apply once", async () => {
+    const api = new FakeApi();
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 }), makeCard({ id: 3 })],
+      summary: makeSummary(3),
+      limit: 100,
+    });
+    api.reviews.push(new TypeError("offline"));
+
+    const h = makeHarness(api);
+    await h.controller.start();
+    await h.controller.rate(3);
+    expect(h.controller.getState().pendingRetry).not.toBeNull();
+
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 1 }), 2));
+    const first = h.controller.retryPending();
+    const second = h.controller.retryPending();
+    await Promise.all([first, second]);
+
+    expect(api.reviewCalls.length).toBe(2);
+    const state = h.controller.getState();
+    expect(state.queue.map((c) => c.id)).toEqual([2, 3]);
+    expect(state.completed).toBe(1);
+    expect(state.remaining).toBe(2);
+  });
+
+  test("handleResume does not double-submit an in-flight retry", async () => {
+    const api = new FakeApi();
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 }), makeCard({ id: 3 })],
+      summary: makeSummary(3),
+      limit: 100,
+    });
+    api.reviews.push(new TypeError("offline"));
+
+    const h = makeHarness(api);
+    await h.controller.start();
+    await h.controller.rate(3);
+
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 1 }), 2));
+    const retrying = h.controller.retryPending();
+    const resumed = h.controller.handleResume();
+    await Promise.all([retrying, resumed]);
+
+    expect(api.reviewCalls.length).toBe(2);
+    expect(h.controller.getState().queue.map((c) => c.id)).toEqual([2, 3]);
+    expect(h.controller.getState().completed).toBe(1);
+  });
+
+  test("a restored operation for a non-head card settles without reordering the queue", async () => {
+    const api = new FakeApi();
+    const storage = new MemoryOutboxStorage();
+    await storage.put(stagedOp({ request_id: "old-5", card_id: 5, rating: 1 }));
+    api.reviews.push(new TypeError("offline"));
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 5 }), makeCard({ id: 2 })],
+      summary: makeSummary(3),
+      limit: 100,
+    });
+
+    const h = makeHarness(api, storage);
+    await h.controller.start();
+    expect(h.controller.getState().pendingRetry?.request_id).toBe("old-5");
+
+    api.reviews.push(ack(makeCard({ id: 5, review_version: 1 }), 3, { requestId: "old-5" }));
+    await h.controller.retryPending();
+
+    const state = h.controller.getState();
+    expect(state.queue.map((c) => c.id)).toEqual([1, 2]);
+    expect(state.completed).toBe(0);
+    expect(state.remaining).toBe(3);
+    expect(state.pendingRetry).toBeNull();
+  });
+
+  test("refresh settles the blocked retry and unblocks ratings", async () => {
+    const api = new FakeApi();
+    const storage = new MemoryOutboxStorage();
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+    api.reviews.push(new TypeError("offline"));
+
+    const h = makeHarness(api, storage);
+    await h.controller.start();
+    await h.controller.rate(3);
+    const key = h.controller.getState().pendingRetry!.request_id;
+    expect((await storage.listForUser(7)).length).toBe(1);
+
+    // Refresh: reconciliation retries the staged op and settles it.
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 1 }), 2, { requestId: key }));
+    api.batches.push({
+      items: [makeCard({ id: 1, review_version: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+    await h.controller.refresh();
+
+    expect(h.controller.getState().pendingRetry).toBeNull();
+    expect(api.reviewCalls.length).toBe(2);
+
+    // Ratings work again with a fresh key.
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 2 }), 1));
+    await h.controller.rate(3);
+    api.reviews.push(ack(makeCard({ id: 2, review_version: 1 }), 0));
+    api.batches.push({ items: [], summary: makeSummary(0), limit: 100 });
+    await h.controller.rate(3);
+
+    expect(api.reviewCalls.length).toBe(4);
+    expect(h.controller.getState().phase).toBe("exhausted");
+  });
+
+  test("an empty scan releases a stale block (op settled elsewhere)", async () => {
+    const api = new FakeApi();
+    api.batches.push({ items: [makeCard({ id: 1 })], summary: makeSummary(1), limit: 100 });
+    api.reviews.push(new TypeError("offline"));
+
+    const h = makeHarness(api);
+    await h.controller.start();
+    await h.controller.rate(3);
+    const key = h.controller.getState().pendingRetry!.request_id;
+
+    // The op was completed elsewhere: it is no longer staged anywhere.
+    await h.outbox.complete(key);
+    api.batches.push({ items: [makeCard({ id: 1 })], summary: makeSummary(1), limit: 100 });
+    await h.controller.refresh();
+
+    expect(h.controller.getState().pendingRetry).toBeNull();
+    expect(api.reviewCalls.length).toBe(1);
+  });
+
+  test("a slow resume summary never overwrites a newer count", async () => {
+    const api = new FakeApi();
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+
+    const h = makeHarness(api);
+    await h.controller.start();
+
+    let release!: (summary: DueSummary) => void;
+    api.summaries.push(
+      new Promise<DueSummary>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const resuming = h.controller.handleResume();
+
+    // A review lands while the resume summary is still in flight.
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 1 }), 1));
+    await h.controller.rate(3);
+    expect(h.controller.getState().remaining).toBe(1);
+
+    release(makeSummary(2));
+    await resuming;
+
+    expect(h.controller.getState().remaining).toBe(1);
+  });
+
+  test("a duplicate-in-flight 409 keeps the key staged for retry", async () => {
+    const api = new FakeApi();
+    const storage = new MemoryOutboxStorage();
+    api.batches.push({ items: [makeCard({ id: 1 })], summary: makeSummary(1), limit: 100 });
+    api.reviews.push(
+      new ApiError("Duplicate submission is being processed", 409, {
+        code: "duplicate_in_flight",
+        message: "Duplicate submission is being processed; retry shortly.",
+      }),
+    );
+
+    const h = makeHarness(api, storage);
+    await h.controller.start();
+    await h.controller.rate(3);
+
+    const state = h.controller.getState();
+    expect(state.pendingRetry).not.toBeNull();
+    expect((await storage.listForUser(7)).length).toBe(1);
+    expect(state.error).toBeNull();
+
+    // A later retry replays with the same key and settles the session.
+    const key = state.pendingRetry!.request_id;
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 1 }), 0, { requestId: key }));
+    api.batches.push({ items: [], summary: makeSummary(0), limit: 100 });
+    await h.controller.retryPending();
+
+    expect(h.controller.getState().pendingRetry).toBeNull();
+    expect(h.controller.getState().phase).toBe("exhausted");
+  });
+
+  test("rejections reset the review timer for the next card", async () => {
+    const api = new FakeApi();
+    let nowValue = 1_000;
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+    const h = makeHarness(api, undefined, { now: () => nowValue });
+    await h.controller.start();
+
+    let rejectRating!: (error: ApiError) => void;
+    api.reviews.push(
+      new Promise<ReviewAck>((_, reject) => {
+        rejectRating = reject;
+      }),
+    );
+    const rating = h.controller.rate(3);
+    nowValue = 5_000;
+    rejectRating(
+      new ApiError("Card was reviewed elsewhere", 409, {
+        code: "stale_review_version",
+        message: "stale",
+        summary: makeSummary(1),
+      }),
+    );
+    await rating;
+    expect(h.controller.getState().queue.map((c) => c.id)).toEqual([2]);
+
+    nowValue = 6_000;
+    api.reviews.push(ack(makeCard({ id: 2, review_version: 1 }), 0));
+    api.batches.push({ items: [], summary: makeSummary(0), limit: 100 });
+    await h.controller.rate(3);
+
+    // 6_000 - 5_000 (reset on rejection), not 6_000 - 1_000 (card 1's show time).
+    expect(api.reviewCalls[1].payload.review_duration_ms).toBe(1_000);
   });
 });

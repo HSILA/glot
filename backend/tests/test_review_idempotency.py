@@ -296,7 +296,8 @@ async def test_unresolvable_duplicate_asks_for_retry() -> None:
         )
 
     assert exc.value.status_code == 409
-    assert "retry" in exc.value.detail.lower()
+    assert exc.value.detail["code"] == "duplicate_in_flight"
+    assert "retry" in exc.value.detail["message"].lower()
 
 
 @pytest.mark.asyncio

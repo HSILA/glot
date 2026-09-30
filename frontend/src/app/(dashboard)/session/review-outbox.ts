@@ -100,9 +100,25 @@ export class IndexedDbOutboxStorage implements OutboxStorage {
     const db = await this.open();
     return new Promise<T>((resolve, reject) => {
       const transaction = db.transaction(STORE, mode);
+      let result: T | undefined;
+
       const request = makeRequest(transaction.objectStore(STORE));
-      request.onsuccess = () => resolve(request.result);
-      request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
+      request.onsuccess = () => {
+        result = request.result;
+      };
+      request.onerror = () => {
+        reject(request.error ?? new Error("IndexedDB request failed"));
+      };
+      // Resolve only when the transaction COMMITS: a write that has not
+      // committed can still abort, and a lost idempotency key must never
+      // look durable.
+      transaction.oncomplete = () => resolve(result as T);
+      transaction.onabort = () => {
+        reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+      };
+      transaction.onerror = () => {
+        reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+      };
     });
   }
 

@@ -284,8 +284,9 @@ function parseReviewResponse(value: unknown): ReviewResponse {
   if (typeof value.replayed !== "boolean") {
     throw new Error("Review response: invalid replayed");
   }
+  // Some serializers omit null fields entirely; treat both as absent.
   const summary =
-    value.summary === null ? null : parseDueSummary(value.summary, "Review response.summary");
+    value.summary == null ? null : parseDueSummary(value.summary, "Review response.summary");
 
   return {
     card,
