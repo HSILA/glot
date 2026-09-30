@@ -3,8 +3,8 @@
  *
  * The outbox is what makes retries safe: the idempotency key is persisted
  * before the request is sent. These tests pin down the durable-write signal,
- * the merged (storage + memory) view, user filtering, and the graceful
- * degradation when storage is unavailable.
+ * scan completeness, the merged (storage + memory) view, user filtering, and
+ * the graceful degradation when storage is unavailable.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -32,6 +32,16 @@ function makeOp(overrides: Partial<PendingReview> = {}): PendingReview {
   };
 }
 
+/** Memory storage whose durable reads can be switched to failing. */
+class ToggleReadStorage extends MemoryOutboxStorage {
+  failReads = false;
+
+  override async listForUser(userId: number): Promise<PendingReview[]> {
+    if (this.failReads) throw new Error("storage read failed");
+    return super.listForUser(userId);
+  }
+}
+
 describe("MemoryOutboxStorage", () => {
   test("stores, lists by user, and removes by id", async () => {
     const storage = new MemoryOutboxStorage();
@@ -54,11 +64,11 @@ describe("ReviewOutbox", () => {
 
     const result = await outbox.stage(makeOp());
     expect(result.durable).toBe(true);
-    expect((await outbox.pendingForUser(7)).length).toBe(1);
+    expect((await outbox.pendingForUser(7)).ops.length).toBe(1);
 
     await outbox.complete("req-1");
 
-    expect((await outbox.pendingForUser(7)).length).toBe(0);
+    expect((await outbox.pendingForUser(7)).ops.length).toBe(0);
     expect(await storage.listForUser(7)).toEqual([]);
   });
 
@@ -69,9 +79,10 @@ describe("ReviewOutbox", () => {
     await outbox.stage(makeOp({ request_id: "late", created_at: 2000 }));
     await storage.put(makeOp({ request_id: "early", created_at: 1000 }));
 
-    const pending = await outbox.pendingForUser(7);
+    const scan = await outbox.pendingForUser(7);
 
-    expect(pending.map((op) => op.request_id)).toEqual(["early", "late"]);
+    expect(scan.durableRead).toBe(true);
+    expect(scan.ops.map((op) => op.request_id)).toEqual(["early", "late"]);
   });
 
   test("a failed durable write still keeps the op visible for this page", async () => {
@@ -91,11 +102,14 @@ describe("ReviewOutbox", () => {
     const result = await outbox.stage(makeOp());
     expect(result.durable).toBe(false);
 
-    // The memory mirror keeps it retryable for this page's lifetime.
-    expect((await outbox.pendingForUser(7)).map((op) => op.request_id)).toEqual(["req-1"]);
+    // The memory mirror keeps it retryable for this page's lifetime; the
+    // degraded scan reports that the durable read failed.
+    const scan = await outbox.pendingForUser(7);
+    expect(scan.durableRead).toBe(false);
+    expect(scan.ops.map((op) => op.request_id)).toEqual(["req-1"]);
 
     await outbox.complete("req-1");
-    expect(await outbox.pendingForUser(7)).toEqual([]);
+    expect((await outbox.pendingForUser(7)).ops).toEqual([]);
   });
 
   test("filters other users' operations", async () => {
@@ -103,7 +117,24 @@ describe("ReviewOutbox", () => {
     await outbox.stage(makeOp({ request_id: "mine", user_id: 7 }));
     await outbox.stage(makeOp({ request_id: "theirs", user_id: 8 }));
 
-    expect((await outbox.pendingForUser(7)).map((op) => op.request_id)).toEqual(["mine"]);
+    expect((await outbox.pendingForUser(7)).ops.map((op) => op.request_id)).toEqual(["mine"]);
+  });
+
+  test("recovered operations survive later degraded scans", async () => {
+    const storage = new ToggleReadStorage();
+    await storage.put(makeOp({ request_id: "old-1" }));
+    const outbox = new ReviewOutbox(storage);
+
+    const first = await outbox.pendingForUser(7);
+    expect(first.durableRead).toBe(true);
+    expect(first.ops.map((op) => op.request_id)).toEqual(["old-1"]);
+
+    // A later read failure must not make the recovered operation vanish:
+    // the scan is incomplete, not empty.
+    storage.failReads = true;
+    const second = await outbox.pendingForUser(7);
+    expect(second.durableRead).toBe(false);
+    expect(second.ops.map((op) => op.request_id)).toEqual(["old-1"]);
   });
 });
 

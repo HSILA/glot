@@ -513,6 +513,16 @@ describe("generateRequestId", () => {
   });
 });
 
+/** Memory storage whose durable reads can be switched to failing. */
+class ToggleReadStorage extends MemoryOutboxStorage {
+  failReads = false;
+
+  override async listForUser(userId: number): Promise<PendingReview[]> {
+    if (this.failReads) throw new Error("storage read failed");
+    return super.listForUser(userId);
+  }
+}
+
 describe("SessionController — review-fix regressions", () => {
   test("overlapping retries submit once and apply once", async () => {
     const api = new FakeApi();
@@ -742,5 +752,69 @@ describe("SessionController — review-fix regressions", () => {
 
     // 6_000 - 5_000 (reset on rejection), not 6_000 - 1_000 (card 1's show time).
     expect(api.reviewCalls[1].payload.review_duration_ms).toBe(1_000);
+  });
+
+  test("a failed storage read during refresh keeps the blocked retry", async () => {
+    const api = new FakeApi();
+    const storage = new ToggleReadStorage();
+    await storage.put(stagedOp({ request_id: "old-1", card_id: 1 }));
+    api.reviews.push(new TypeError("offline"));
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+
+    const h = makeHarness(api, storage);
+    await h.controller.start();
+    expect(h.controller.getState().pendingRetry?.request_id).toBe("old-1");
+
+    // The durable read now fails: the scan is degraded, and it must not be
+    // mistaken for "the operation is gone".
+    storage.failReads = true;
+    api.reviews.push(new TypeError("offline"));
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+    await h.controller.refresh();
+
+    const state = h.controller.getState();
+    expect(state.pendingRetry?.request_id).toBe("old-1");
+    expect(api.reviewCalls.length).toBe(2);
+
+    storage.failReads = false;
+    expect((await storage.listForUser(7)).length).toBe(1);
+  });
+
+  test("a summary-less acknowledgment invalidates older summaries too", async () => {
+    const api = new FakeApi();
+    api.batches.push({
+      items: [makeCard({ id: 1 }), makeCard({ id: 2 })],
+      summary: makeSummary(2),
+      limit: 100,
+    });
+
+    const h = makeHarness(api);
+    await h.controller.start();
+
+    let release!: (summary: DueSummary) => void;
+    api.summaries.push(
+      new Promise<DueSummary>((resolve) => {
+        release = resolve;
+      }),
+    );
+    const resuming = h.controller.handleResume();
+
+    // A legacy acknowledgment (no summary) lands while the resume read is
+    // in flight; the fallback decrement must still invalidate that read.
+    api.reviews.push(ack(makeCard({ id: 1, review_version: 1 }), null));
+    await h.controller.rate(3);
+    expect(h.controller.getState().remaining).toBe(1);
+
+    release(makeSummary(2));
+    await resuming;
+    expect(h.controller.getState().remaining).toBe(1);
   });
 });

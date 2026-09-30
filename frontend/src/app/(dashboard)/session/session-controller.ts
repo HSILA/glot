@@ -443,9 +443,10 @@ export class SessionController {
         this.setRemaining(ack.summary.total);
       } else if (this.state.remaining !== null) {
         // Legacy server fallback: a passing rating removes the card from the
-        // due set; Again keeps it due.
+        // due set; Again keeps it due. Routed through setRemaining so this
+        // newer count also invalidates older in-flight summary reads.
         if (!shouldRequeue(op.rating)) {
-          this.state.remaining = Math.max(0, this.state.remaining - 1);
+          this.setRemaining(Math.max(0, this.state.remaining - 1));
         }
       }
 
@@ -526,8 +527,9 @@ export class SessionController {
     if (this.resolving || this.disposed || this.inFlight) return;
     this.resolving = true;
     try {
-      const pending = await this.outbox.pendingForUser(this.scope.userId);
+      const scan = await this.outbox.pendingForUser(this.scope.userId);
       if (this.disposed) return;
+      const pending = scan.ops;
 
       const settledIds = new Set<string>();
       let unresolved = 0;
@@ -551,9 +553,15 @@ export class SessionController {
       if (unresolvedInScope) {
         this.state.pendingRetry = unresolvedInScope;
       } else if (this.state.pendingRetry) {
-        // The blocking retry settled (just now, on another surface, or the
-        // scan no longer contains it); ratings are unblocked again.
-        this.state.pendingRetry = null;
+        // Release the block only on definitive evidence: the operation
+        // settled in this scan, or a complete scan no longer lists it. A
+        // degraded scan (durable read failed) cannot disprove it.
+        const retryId = this.state.pendingRetry.request_id;
+        const settledNow = settledIds.has(retryId);
+        const stillStaged = pending.some((op) => op.request_id === retryId);
+        if (settledNow || (scan.durableRead && !stillStaged)) {
+          this.state.pendingRetry = null;
+        }
       }
       if (!unresolvedInScope && unresolved > 0) {
         const tail = `${unresolved} earlier review${unresolved === 1 ? "" : "s"} could not be confirmed yet; it will retry automatically.`;

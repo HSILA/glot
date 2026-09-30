@@ -13,8 +13,9 @@
  * durable write fails, `stage` reports `{ durable: false }` so the caller can
  * degrade honestly (retry still works for this page, but not after a reload).
  *
- * A memory mirror keeps every staged operation visible for the page's
- * lifetime even when the durable write failed.
+ * A memory mirror keeps every staged operation — and every operation
+ * recovered from durable storage — visible for the page's lifetime, even
+ * when a later storage read fails.
  */
 
 export type OutboxRating = 1 | 2 | 3 | 4;
@@ -37,6 +38,12 @@ export interface OutboxStorage {
   listForUser(userId: number): Promise<PendingReview[]>;
   put(op: PendingReview): Promise<void>;
   remove(requestId: string): Promise<void>;
+}
+
+/** Result of a pending scan; `durableRead` is false when storage was unreadable. */
+export interface PendingScan {
+  ops: PendingReview[];
+  durableRead: boolean;
 }
 
 /** In-memory storage. Used in tests and as the last-resort fallback. */
@@ -178,21 +185,33 @@ export class ReviewOutbox {
   /**
    * All staged operations for a user, oldest first, merging durable storage
    * with the in-memory mirror.
+   *
+   * `durableRead` reports whether the durable scan ran: false means storage
+   * could not be read and the result comes from the mirror alone. Callers
+   * must not treat a failed scan as proof that an operation is gone.
+   * Operations recovered from storage are retained in the mirror, so this
+   * page keeps knowing about them for its lifetime.
    */
-  async pendingForUser(userId: number): Promise<PendingReview[]> {
+  async pendingForUser(userId: number): Promise<PendingScan> {
     let stored: PendingReview[] = [];
+    let durableRead = true;
     try {
       stored = await this.storage.listForUser(userId);
     } catch {
-      // Fall through to the mirror.
+      // Fall through to the mirror; the scan is degraded, not empty.
+      durableRead = false;
     }
 
+    for (const op of stored) this.mirror.set(op.request_id, op);
+
     const merged = new Map<string, PendingReview>();
-    for (const op of stored) merged.set(op.request_id, op);
     for (const op of this.mirror.values()) {
       if (op.user_id === userId) merged.set(op.request_id, op);
     }
 
-    return [...merged.values()].sort((a, b) => a.created_at - b.created_at);
+    return {
+      ops: [...merged.values()].sort((a, b) => a.created_at - b.created_at),
+      durableRead,
+    };
   }
 }
