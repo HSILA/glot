@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # App. ClassVar: release-managed (x-release-please-version), never
     # populated from the environment.
     app_name: str = "Glot API"
-    app_version: ClassVar[str] = "0.3.5"  # x-release-please-version
+    app_version: ClassVar[str] = "0.4.0"  # x-release-please-version
     debug: bool = False
 
     # Database
