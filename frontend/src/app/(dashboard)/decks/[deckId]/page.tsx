@@ -16,6 +16,7 @@ import { cardsApi, type Card as FlashCard, type CardState } from "@/lib/api/card
 import { NewCardModal } from "@/components/cards/new-card-modal";
 import { EditCardModal } from "@/components/cards/edit-card-modal";
 import { DeleteCardModal } from "@/components/cards/delete-card-modal";
+import { DECK_STATE_FILTERS } from "./deck-state-filters";
 
 const BATCH_SIZE = 20;
 
@@ -270,14 +271,6 @@ export default function DeckDetailPage() {
     );
   }
 
-  const filters: { value: CardState | "all"; label: string }[] = [
-    { value: "all", label: "All" },
-    { value: "new", label: "New" },
-    { value: "learning", label: "Learning" },
-    { value: "review", label: "Review" },
-    { value: "relearning", label: "Relearning" },
-  ];
-
   const mastered = Math.max(0, deck.cards_count - deck.due_count - deck.new_count);
 
   return (
@@ -443,9 +436,9 @@ export default function DeckDetailPage() {
             />
           </div>
 
-          {/* Filter pills — unchanged */}
+          {/* Card state filters */}
           <div className="flex flex-wrap gap-1.5">
-            {filters.map((f) => {
+            {DECK_STATE_FILTERS.map((f) => {
               const active = stateFilter === f.value;
               return (
                 <button
