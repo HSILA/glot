@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1](https://github.com/HSILA/glot/compare/v0.4.0...v0.4.1) (2026-10-05)
+
+
+### Bug Fixes
+
+* **frontend:** patch Next.js ImageResponse vulnerability ([6f46150](https://github.com/HSILA/glot/commit/6f461503fcc90d9f0fd036fb85a69eaf0270f078))
+* **frontend:** patch Next.js ImageResponse vulnerability ([aab9428](https://github.com/HSILA/glot/commit/aab9428fbeaa895ede28ca91ffa218c9fdaea46c))
+* hide the standalone relearning deck filter ([e5c64db](https://github.com/HSILA/glot/commit/e5c64db982b2c551bffc5e7312d576c160657911))
+* hide the standalone Relearning deck filter ([42704ce](https://github.com/HSILA/glot/commit/42704ce1316341957029005bb9e1a63da2395bb0))
+
 ## [0.4.0](https://github.com/HSILA/glot/compare/v0.3.5...v0.4.0) (2026-09-30)
 
 
