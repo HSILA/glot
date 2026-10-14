@@ -9,11 +9,12 @@ from datetime import datetime
 from typing import Any
 
 from fsrs_rs_python import DEFAULT_PARAMETERS
-from sqlalchemy import Column, text
+from sqlalchemy import Column, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlmodel import Field, SQLModel
 
 from app.core.datetime_utils import TimestampTZ, utc_now
+from app.core.timezones import TIMEZONE_MAX_LENGTH
 
 # Convert to list once at module load (DEFAULT_PARAMETERS is a tuple)
 _DEFAULT_WEIGHTS: list[float] = list(DEFAULT_PARAMETERS)
@@ -55,6 +56,14 @@ class UserSettings(SQLModel, table=True):
         ge=0.7,
         le=0.97,
         description="Target probability of correct recall",
+    )
+
+    # Study calendar timezone (issue #126): IANA name, null = not chosen (UTC fallback).
+    timezone: str | None = Field(
+        default=None,
+        max_length=TIMEZONE_MAX_LENGTH,
+        sa_column=Column(String(TIMEZONE_MAX_LENGTH), nullable=True),
+        description="IANA timezone for the study calendar; null uses UTC",
     )
 
     # Algorithm weights - initialized with defaults, updated by optimizer

@@ -2,6 +2,7 @@
 Pydantic schemas for API request/response validation.
 """
 
+from .activity import ActivityDayRead, ActivityResponse
 from .auth import (
     DeviceListResponse,
     DeviceRead,
@@ -46,6 +47,9 @@ from .resource import (
 from .settings import SettingsRead, SettingsUpdate
 
 __all__ = [
+    # Activity
+    "ActivityResponse",
+    "ActivityDayRead",
     # Auth
     "UserRegister",
     "UserRegistered",

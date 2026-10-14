@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/glot/icon";
+import StudyActivityPanel from "@/components/activity/study-activity-panel";
 import { useAuth } from "@/components/providers/auth-provider";
 import { cardsApi, type DueSummary } from "@/lib/api/cards";
 import { decksApi, type Deck } from "@/lib/api/decks";
@@ -297,6 +298,9 @@ export default function MyDayPage() {
           </div>
         </div>
       </section>
+
+      {/* Study activity — streaks and the 365-day grid (issue #126) */}
+      <StudyActivityPanel />
 
       {/* Stack: due decks — Variant B card-stack style */}
       {dueDecks.length > 0 && (

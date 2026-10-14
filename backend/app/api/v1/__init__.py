@@ -4,6 +4,7 @@ API v1 routes.
 
 from fastapi import APIRouter
 
+from .activity import router as activity_router
 from .auth import router as auth_router
 from .cards import router as cards_router
 from .decks import router as decks_router
@@ -17,3 +18,4 @@ router.include_router(cards_router, prefix="/cards", tags=["Cards"])
 router.include_router(decks_router, prefix="/decks", tags=["Decks"])
 router.include_router(resources_router, prefix="/resources", tags=["Resources"])
 router.include_router(settings_router, prefix="/settings", tags=["Settings"])
+router.include_router(activity_router, prefix="/activity", tags=["Activity"])
