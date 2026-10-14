@@ -17,7 +17,14 @@ from fastapi import HTTPException
 from sqlalchemy import Insert, Update
 
 import app.api.v1.cards as cards_api
-from app.models import Card, CardState, ReviewSubmission, User
+from app.models import (
+    Card,
+    CardState,
+    ReviewLog,
+    ReviewSubmission,
+    StudyActivityEvent,
+    User,
+)
 from app.schemas.card import CardRead, NextStatesResponse, ReviewRequest, ReviewResponse
 from app.services.due_cards import StudyScopeCounts
 from app.services.fsrs_service import FSRSService
@@ -120,9 +127,15 @@ async def test_legacy_submission_without_request_id_still_records() -> None:
     assert response.request_id is None
     assert response.summary is None
     assert card.review_version == 4
-    log = session.add.call_args[0][0]
+    added = [call.args[0] for call in session.add.call_args_list]
+    log = next(item for item in added if isinstance(item, ReviewLog))
+    event = next(item for item in added if isinstance(item, StudyActivityEvent))
     assert log.card_id == 7
     assert log.rating == 3
+    # The activity projection copies the log's exact timestamp and owner.
+    assert event.user_id == 1
+    assert event.review_log_id is None  # assigned by the DB on flush
+    assert event.reviewed_at == log.reviewed_at
     session.commit.assert_awaited_once()
 
 

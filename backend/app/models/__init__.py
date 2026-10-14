@@ -29,6 +29,7 @@ from .resource import ExtractionStatus, PageExtraction, PageStatus, Resource
 from .review_log import ReviewLog
 from .review_submission import ReviewSubmission
 from .settings import UserSettings
+from .study_activity import StudyActivityEvent
 from .user import User
 from .user_resource import UserResource
 
@@ -46,4 +47,5 @@ __all__ = [
     "PageExtraction",
     "PageStatus",
     "UserResource",
+    "StudyActivityEvent",
 ]

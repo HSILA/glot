@@ -34,7 +34,15 @@ from app.dependencies import (
     get_current_user,
     get_user_settings,
 )
-from app.models import Card, CardState, Deck, ReviewLog, ReviewSubmission, User
+from app.models import (
+    Card,
+    CardState,
+    Deck,
+    ReviewLog,
+    ReviewSubmission,
+    StudyActivityEvent,
+    User,
+)
 from app.schemas import (
     CardCreate,
     CardListResponse,
@@ -747,6 +755,20 @@ async def review_card(
         elapsed_days=elapsed_days,
     )
     session.add(review_log)
+
+    await session.flush()
+
+    # Project the committed rating into the study-activity calendar (issue
+    # #126). Same transaction as the log, receipt, and scheduling; the exact
+    # log timestamp is copied so dates regroup when the timezone changes.
+    # Unique review_log_id makes this idempotent under any rerun/backfill.
+    session.add(
+        StudyActivityEvent(
+            user_id=user_id,
+            review_log_id=review_log.id,
+            reviewed_at=review_log.reviewed_at,
+        )
+    )
 
     await session.flush()
     await session.refresh(card)
